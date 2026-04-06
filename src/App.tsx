@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
-
   ChevronRight,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -16,13 +15,15 @@ import { io } from "socket.io-client";
 import type { Socket } from "socket.io-client";
 import ConnectionView from "./Connectionview";
 import SendView from "./Sendview";
-import BulkView from "./Bulkview";
+
 import CampaignsView from "./Campaignsview";
 import MasivoSection from "./Bulkview";
 
 const BASE_URL = "http://localhost:3000";
+const API_KEY  = "8322bad0-e8b2-49a8-b6b9-0d736a0eaa36";
 
 type View = "connection" | "send" | "bulk" | "campaigns";
+type EstadoWA = "desconectado" | "conectando" | "qr" | "conectado" | "reconectando" | "error";
 
 interface Toast {
   id: string;
@@ -59,7 +60,7 @@ export default function App() {
 
   const socketRef = useRef<Socket | null>(null);
 
-  // Toast helper — se pasa a los hijos para que puedan notificar
+  // ── Toast helper ──────────────────────────────────────────────────────────
   const addToast = (message: string, type: Toast["type"] = "info") => {
     const id = Math.random().toString(36).substr(2, 9);
     setToasts((prev) => [...prev, { id, message, type }]);
@@ -69,7 +70,18 @@ export default function App() {
     );
   };
 
-  // Socket — solo se conecta aquí, se pasa a ConnectionView
+  // ── Callback que recibe el estado de WhatsApp desde ConnectionView ────────
+  const handleStatusChange = (
+    estado: EstadoWA,
+    usuario: string | null,
+    numero: string | null,
+  ) => {
+    setConnected(estado === "conectado");
+    setUser(usuario);
+    setNumber(numero);
+  };
+
+  // ── Socket — solo se conecta aquí, se pasa a los hijos ───────────────────
   useEffect(() => {
     socketRef.current = io(BASE_URL);
     return () => {
@@ -78,10 +90,10 @@ export default function App() {
   }, []);
 
   const navItems = [
-    { id: "connection", label: "Conexión", icon: QrCode },
-    { id: "send", label: "Enviar", icon: Send },
-    { id: "bulk", label: "Masivo", icon: Users },
-    { id: "campaigns", label: "Campañas", icon: BarChart3 },
+    { id: "connection", label: "Conexión",  icon: QrCode    },
+    { id: "send",       label: "Enviar",    icon: Send      },
+    { id: "bulk",       label: "Masivo",    icon: Users     },
+    { id: "campaigns",  label: "Campañas",  icon: BarChart3 },
   ];
 
   return (
@@ -182,12 +194,9 @@ export default function App() {
           {currentView === "connection" && (
             <ConnectionView
               apiUrl={`${BASE_URL}/api`}
+              apiKey={API_KEY}
               socket={socketRef.current}
-              onStatusChange={(estado, usuario, numero) => {
-                setConnected(estado === "conectado");
-                setUser(usuario);
-                setNumber(numero);
-              }}
+              onStatusChange={handleStatusChange}
             />
           )}
           {currentView === "send" && (
@@ -198,17 +207,17 @@ export default function App() {
             />
           )}
           {currentView === "bulk" && (
-      <MasivoSection
-  isConnected={connected}  // ← nombre correcto
-  socket={socketRef.current}
-  onToast={addToast}
-/>
+            <MasivoSection
+              isConnected={connected}
+              socket={socketRef.current}
+              onToast={addToast}
+            />
           )}
           {currentView === "campaigns" && (
-              <CampaignsView
-    baseUrl={BASE_URL}
-    onToast={addToast}
-  />
+            <CampaignsView
+              baseUrl={BASE_URL}
+              onToast={addToast}
+            />
           )}
         </div>
 

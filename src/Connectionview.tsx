@@ -22,6 +22,7 @@ interface LogEntry {
 
 interface ConnectionViewProps {
   apiUrl: string;
+  apiKey: string;          // ← nuevo prop obligatorio
   socket?: any | null;
   onStatusChange?: (estado: EstadoWA, usuario: string | null, numero: string | null) => void;
 }
@@ -69,7 +70,7 @@ function StatCard({ title, value, icon: Icon, accent }: {
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
-export default function ConnectionView({ apiUrl, socket, onStatusChange }: ConnectionViewProps) {
+export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange }: ConnectionViewProps) {
 
   const [waStatus,        setWaStatus]        = useState<WAStatus>({ estado: "desconectado" });
   const [qrSrc,           setQrSrc]           = useState<string | null>(null);
@@ -83,6 +84,13 @@ export default function ConnectionView({ apiUrl, socket, onStatusChange }: Conne
   const qrCountRef     = useRef(0);
 
   useEffect(() => { waStatusRef.current = waStatus; }, [waStatus]);
+
+  // ── Headers con API Key ───────────────────────────────────────────────────
+  // Se recalcula si cambia apiKey
+  const authHeaders = useRef<Record<string, string>>({});
+  useEffect(() => {
+    authHeaders.current = apiKey ? { "x-api-key": apiKey } : {};
+  }, [apiKey]);
 
   const addLog = useCallback((message: string, type: LogEntry["type"] = "info") => {
     setLogs(prev => [...prev, makeLog(message, type)]);
@@ -101,13 +109,18 @@ export default function ConnectionView({ apiUrl, socket, onStatusChange }: Conne
   // ── loadStatus ────────────────────────────────────────────────────────────
   const loadStatus = useCallback(async (): Promise<EstadoWA> => {
     try {
-      const { data } = await axios.get(`${apiUrl}/status`);
+      const { data } = await axios.get(`${apiUrl}/status`, { headers: authHeaders.current });
       const raw: WAStatus = data.datos ?? data;
       applyStatus({ ...raw, numero: normalizeNumero(raw.numero) });
       return raw.estado;
-    } catch {
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 401 || status === 403) {
+        addLog("API Key inválida o sin permisos (401/403)", "error");
+      } else {
+        addLog("Error al obtener estado", "error");
+      }
       applyStatus({ estado: "error" });
-      addLog("Error al obtener estado", "error");
       return "error";
     }
   }, [apiUrl, applyStatus, addLog]);
@@ -117,17 +130,21 @@ export default function ConnectionView({ apiUrl, socket, onStatusChange }: Conne
     if (waStatusRef.current.estado === "conectado") return;
     setQrPhase("waiting");
     try {
-      const { data } = await axios.get(`${apiUrl}/qr`);
+      const { data } = await axios.get(`${apiUrl}/qr`, { headers: authHeaders.current });
       const d = data.datos ?? data;
       if (d?.qr) {
-        // Solo seteamos el QR visualmente, NO logueamos — el socket onQR se encarga del log
         setQrSrc(toSrc(d.qr));
         setQrPhase("qr");
       } else if (d?.estado === "conectado") {
         applyStatus({ estado: "conectado", usuario: d.usuario, numero: normalizeNumero(d.numero) });
       }
-    } catch {
-      addLog("Error al cargar QR", "error");
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 401 || status === 403) {
+        addLog("API Key inválida — no se pudo cargar el QR", "error");
+      } else {
+        addLog("Error al cargar QR", "error");
+      }
     }
   }, [apiUrl, applyStatus, addLog]);
 
@@ -136,15 +153,20 @@ export default function ConnectionView({ apiUrl, socket, onStatusChange }: Conne
     if (!confirm("¿Cerrar sesión de WhatsApp?")) return;
     setIsDisconnecting(true);
     try {
-      await axios.post(`${apiUrl}/disconnect`);
+      await axios.post(`${apiUrl}/disconnect`, {}, { headers: authHeaders.current });
       setWaStatus({ estado: "desconectado" });
       setQrSrc(null);
       setQrPhase("waiting");
       onStatusChange?.("desconectado", null, null);
       qrCountRef.current = 0;
       addLog("Sesión cerrada — esperando nuevo QR...", "warning");
-    } catch {
-      addLog("Error al cerrar sesión", "error");
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 401 || status === 403) {
+        addLog("API Key inválida — no se pudo cerrar sesión", "error");
+      } else {
+        addLog("Error al cerrar sesión", "error");
+      }
     } finally {
       setIsDisconnecting(false);
     }
@@ -167,14 +189,12 @@ export default function ConnectionView({ apiUrl, socket, onStatusChange }: Conne
       addLog(msg, "info");
     };
 
-    // Igual que el vanilla: loguear `mensaje` siempre — el servidor manda mensajes descriptivos
     const onEstado = ({ estado, usuario, numero, mensaje }: WAStatus & { mensaje?: string }) => {
       applyStatus({ estado, usuario, numero: normalizeNumero(numero) });
-      // Fallback si el servidor no manda mensaje
       const fallback: Record<string, string> = {
         reconectando: "Reconectando...",
         conectando:   "Vinculando dispositivo...",
-        conectado:    usuario ? `✅ Conectado como ${usuario}` : "✅ WhatsApp conectado",
+        conectado:    usuario ? `Conectado como ${usuario}` : "WhatsApp conectado",
         desconectado: "Desconectado",
         error:        "Error de conexión",
         qr:           "Generando QR...",
@@ -207,7 +227,7 @@ export default function ConnectionView({ apiUrl, socket, onStatusChange }: Conne
 
     loadStatus().then((estado) => {
       if (estado === "conectado") {
-        addLog("✅ WhatsApp conectado y listo", "success");
+        addLog("WhatsApp conectado y listo", "success");
       } else {
         setQrPhase("waiting");
         addLog("Esperando QR del servidor...", "info");
@@ -230,15 +250,15 @@ export default function ConnectionView({ apiUrl, socket, onStatusChange }: Conne
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
       {/* Panel izquierdo */}
-      <div className="bg-[#111111] border border-white/5 rounded-2xl p-6 flex flex-col items-center justify-center relative overflow-hidden min-h-[420px]">
-        <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-transparent via-[#25D366] to-transparent opacity-30" />
+      <div className="bg-[#111111] rounded-2xl p-6 flex flex-col items-center justify-center relative overflow-hidden min-h-105">
+        <div className="absolute top-0 left-0 w-full h-0.5 bg-linear-to-r from-transparent via-[#25D366] to-transparent opacity-30" />
 
         {/* Conectado */}
         {isConnected && (
           <motion.div initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
             className="flex flex-col items-center gap-5">
             <div className="relative">
-              <div className="absolute inset-0 bg-[#25D366] blur-2xl opacity-20 animate-pulse" />
+              <div className="absolute inset-0 bg-[#25D366] rounded-full" />
               <div className="bg-[#25D366] p-5 rounded-full relative">
                 <CheckCircle2 className="w-20 h-20 text-white" />
               </div>
@@ -367,17 +387,6 @@ export default function ConnectionView({ apiUrl, socket, onStatusChange }: Conne
           </div>
         </div>
 
-        {isConnected && (
-          <button onClick={desconectar} disabled={isDisconnecting}
-            className="w-full py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl font-bold
-                       uppercase tracking-widest transition-all flex items-center justify-center gap-2
-                       border border-red-500/20 disabled:opacity-50 text-xs">
-            {isDisconnecting
-              ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              : <LogOut className="w-3.5 h-3.5" />}
-            {isDisconnecting ? "Cerrando sesión..." : "Cerrar Sesión"}
-          </button>
-        )}
       </div>
     </div>
   );
