@@ -10,6 +10,7 @@ import {
   AlertCircle,
   ChevronRight,
   LogOut,
+  Code2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { io } from "socket.io-client";
@@ -20,6 +21,7 @@ import SendView from "./Sendview";
 import CampaignsView from "./Campaignsview";
 import MasivoSection from "./Bulkview";
 import LoginView from "./LoginView";
+import ApiView from "./ApiView";
 
 const BASE_URL = "https://do.velsat.pe:8443/whatsapp";
 
@@ -29,7 +31,7 @@ interface AppUser {
   api_key: string;
 }
 
-type View = "connection" | "send" | "bulk" | "campaigns";
+type View = "connection" | "send" | "bulk" | "campaigns" | "api";
 type EstadoWA = "desconectado" | "conectando" | "qr" | "conectado" | "reconectando" | "error";
 
 interface Toast {
@@ -115,6 +117,7 @@ export default function App() {
     { id: "send",       label: "Enviar",    icon: Send      },
     { id: "bulk",       label: "Masivo",    icon: Users     },
     { id: "campaigns",  label: "Campañas",  icon: BarChart3 },
+    { id: "api",        label: "API Docs",  icon: Code2     },
   ];
 
   if (!currentUser) {
@@ -262,6 +265,13 @@ export default function App() {
               baseUrl={BASE_URL}
               apiKey={currentUser.api_key}
               onToast={addToast}
+            />
+          )}
+          {currentView === "api" && (
+            <ApiView
+              apiKey={currentUser.api_key}
+              userName={currentUser.nombre}
+              baseUrl={BASE_URL}
             />
           )}
         </div>
