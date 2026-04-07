@@ -32,6 +32,7 @@ interface CampaignDetail extends Campaign {
 
 interface CampaignsViewProps {
   baseUrl: string;
+  apiKey: string;
   onToast: (message: string, type: "success" | "error" | "info") => void;
 }
 
@@ -149,10 +150,11 @@ function CampaignCard({ c, onClick }: { c: Campaign; onClick: () => void }) {
 
 // ─── DETAIL DRAWER ───────────────────────────────────────────────────────
 function DetailDrawer({
-  campaignId, baseUrl, onClose, onToast, onDeleted,
+  campaignId, baseUrl, apiKey, onClose, onToast, onDeleted,
 }: {
   campaignId: string;
   baseUrl: string;
+  apiKey: string;
   onClose: () => void;
   onToast: (m: string, t: "success" | "error" | "info") => void;
   onDeleted: () => void;
@@ -167,7 +169,7 @@ function DetailDrawer({
     const load = async () => {
       setLoading(true);
       try {
-        const r = await fetch(`${baseUrl}/api/campaigns/${campaignId}`);
+        const r = await fetch(`${baseUrl}/api/campaigns/${campaignId}`, { headers: {"x-api-key": apiKey} });
         const d = await r.json();
         const raw = d.datos;
         setDetail({ ...raw.campaña, mensajes: raw.mensajes || [] });
@@ -183,7 +185,7 @@ function DetailDrawer({
   const cancel = async () => {
     setCancelling(true);
     try {
-      await fetch(`${baseUrl}/api/campaigns/${campaignId}/cancel`, { method: "POST" });
+      await fetch(`${baseUrl}/api/campaigns/${campaignId}/cancel`, { method: "POST", headers: {"x-api-key": apiKey} });
       onToast("Campaña cancelada", "info");
       onClose();
       onDeleted();
@@ -198,7 +200,7 @@ function DetailDrawer({
     if (!confirm("¿Eliminar esta campaña del historial?")) return;
     setDeleting(true);
     try {
-      await fetch(`${baseUrl}/api/campaigns/${campaignId}`, { method: "DELETE" });
+      await fetch(`${baseUrl}/api/campaigns/${campaignId}`, { method: "DELETE", headers: {"x-api-key": apiKey} });
       onToast("Campaña eliminada", "success");
       onClose();
       onDeleted();
@@ -377,7 +379,7 @@ function DetailDrawer({
 }
 
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────
-export default function CampaignsView({ baseUrl, onToast }: CampaignsViewProps) {
+export default function CampaignsView({ baseUrl, apiKey, onToast }: CampaignsViewProps) {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -387,7 +389,7 @@ export default function CampaignsView({ baseUrl, onToast }: CampaignsViewProps) 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${baseUrl}/api/campaigns`);
+      const r = await fetch(`${baseUrl}/api/campaigns`, { headers: { "x-api-key": apiKey } });
       const d = await r.json();
       setCampaigns(d.datos?.campañas || []);
     } catch {
@@ -518,6 +520,7 @@ export default function CampaignsView({ baseUrl, onToast }: CampaignsViewProps) 
             key={selectedId}
             campaignId={selectedId}
             baseUrl={baseUrl}
+            apiKey={apiKey}
             onClose={() => setSelectedId(null)}
             onToast={onToast}
             onDeleted={() => { setSelectedId(null); load(); }}

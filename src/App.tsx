@@ -9,6 +9,7 @@ import {
   XCircle,
   AlertCircle,
   ChevronRight,
+  LogOut,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { io } from "socket.io-client";
@@ -18,9 +19,15 @@ import SendView from "./Sendview";
 
 import CampaignsView from "./Campaignsview";
 import MasivoSection from "./Bulkview";
+import LoginView from "./LoginView";
 
-const BASE_URL = "http://localhost:3000";
-const API_KEY  = "8322bad0-e8b2-49a8-b6b9-0d736a0eaa36";
+const BASE_URL = "https://do.velsat.pe:8443/whatsapp";
+
+interface AppUser {
+  id: string;
+  nombre: string;
+  api_key: string;
+}
 
 type View = "connection" | "send" | "bulk" | "campaigns";
 type EstadoWA = "desconectado" | "conectando" | "qr" | "conectado" | "reconectando" | "error";
@@ -51,6 +58,20 @@ const StatusBadge = ({ connected }: { connected: boolean }) => (
 );
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
+    const saved = localStorage.getItem("wa_user_session");
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const handleSetUser = (user: AppUser | null) => {
+    if (user) {
+      localStorage.setItem("wa_user_session", JSON.stringify(user));
+    } else {
+      localStorage.removeItem("wa_user_session");
+    }
+    setCurrentUser(user);
+  };
+
   const [currentView, setCurrentView] = useState<View>("connection");
   const [connected, setConnected] = useState(false);
   const [user, setUser] = useState<string | null>(null);
@@ -95,6 +116,10 @@ export default function App() {
     { id: "bulk",       label: "Masivo",    icon: Users     },
     { id: "campaigns",  label: "Campañas",  icon: BarChart3 },
   ];
+
+  if (!currentUser) {
+    return <LoginView onSelectUser={handleSetUser} />;
+  }
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white flex font-sans selection:bg-[#25D366] selection:text-black">
@@ -152,17 +177,24 @@ export default function App() {
             {!isSidebarCollapsed && (
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-bold text-white truncate">
-                  {user || "Desconectado"}
+                  {currentUser.nombre}
                 </p>
-                <p className="text-[10px] text-gray-500 truncate">
-                  {number || "---"}
-                </p>
+<p className="text-[10px] text-gray-500 truncate">
+  WA: {user ? user : number ? "" : "Desconectado"}{number ? ` (${number})` : ""}
+</p>
               </div>
             )}
           </div>
           <button
+            onClick={() => handleSetUser(null)}
+            className={`w-full py-2.5 flex items-center justify-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl text-xs font-semibold transition-colors border border-red-500/20`}
+          >
+            <LogOut className="w-4 h-4" />
+            {!isSidebarCollapsed && <span>Cerrar sesión</span>}
+          </button>
+          <button
             onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-            className="w-full py-2 flex items-center justify-center text-gray-600 hover:text-gray-400 transition-colors"
+            className="w-full pt-1 flex items-center justify-center text-gray-600 hover:text-gray-400 transition-colors"
           >
             <ChevronRight
               className={`w-5 h-5 transition-transform ${isSidebarCollapsed ? "" : "rotate-180"}`}
@@ -179,6 +211,15 @@ export default function App() {
             <div className="h-4 w-px bg-white/10" />
             <StatusBadge connected={connected} />
           </div>
+          <div className="flex items-center gap-3">
+             <div className="text-right">
+               <p className="text-sm font-bold text-white leading-none">{currentUser.nombre}</p>
+               <p className="text-[10px] text-gray-400 mt-1">Sesión Activa</p>
+             </div>
+             <div className="w-9 h-9 rounded-full bg-linear-to-br from-[#25D366] to-[#128C7E] flex items-center justify-center text-black font-bold text-sm shadow-[0_0_15px_rgba(37,211,102,0.2)] border border-white/10">
+               {currentUser.nombre.charAt(0).toUpperCase()}
+             </div>
+          </div>
         </header>
 
         {!connected && (
@@ -194,7 +235,8 @@ export default function App() {
           {currentView === "connection" && (
             <ConnectionView
               apiUrl={`${BASE_URL}/api`}
-              apiKey={API_KEY}
+              apiKey={currentUser.api_key}
+              userName={currentUser.nombre}
               socket={socketRef.current}
               onStatusChange={handleStatusChange}
             />
@@ -203,6 +245,7 @@ export default function App() {
             <SendView
               connected={connected}
               baseUrl={BASE_URL}
+              apiKey={currentUser.api_key}
               onToast={addToast}
             />
           )}
@@ -210,12 +253,14 @@ export default function App() {
             <MasivoSection
               isConnected={connected}
               socket={socketRef.current}
+              apiKey={currentUser.api_key}
               onToast={addToast}
             />
           )}
           {currentView === "campaigns" && (
             <CampaignsView
               baseUrl={BASE_URL}
+              apiKey={currentUser.api_key}
               onToast={addToast}
             />
           )}

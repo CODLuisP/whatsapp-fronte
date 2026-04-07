@@ -29,6 +29,7 @@ interface SendResult {
 interface SendViewProps {
   connected: boolean;
   baseUrl: string;
+  apiKey: string;
   onToast: (message: string, type: "success" | "error" | "info") => void;
 }
 
@@ -153,7 +154,7 @@ function ResultCard({ result }: { result: SendResult }) {
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
-export default function SendView({ connected, baseUrl, onToast }: SendViewProps) {
+export default function SendView({ connected, baseUrl, apiKey, onToast }: SendViewProps) {
   const [msgType,   setMsgType]   = useState<MsgType>("texto");
   const [countryCode, setCountryCode] = useState("51");
   const [phone,     setPhone]     = useState("");
@@ -182,6 +183,7 @@ export default function SendView({ connected, baseUrl, onToast }: SendViewProps)
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${baseUrl}/api/upload`);
+    xhr.setRequestHeader("x-api-key", apiKey);
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100));
@@ -243,7 +245,9 @@ export default function SendView({ connected, baseUrl, onToast }: SendViewProps)
     }
 
     try {
-      const { data } = await axios.post(`${baseUrl}/api/send/single`, body);
+      const { data } = await axios.post(`${baseUrl}/api/send/single`, body, {
+        headers: { "x-api-key": apiKey }
+      });
 
       if (data.exito) {
         setResult({ ok: true, phone: fullPhone, messageId: data.datos?.message_id });
@@ -303,8 +307,7 @@ export default function SendView({ connected, baseUrl, onToast }: SendViewProps)
             </label>
             <div className="flex gap-2">
               {/* Código de país editable */}
-              <div className="flex items-center gap-1.5 bg-white/5 border border-white/10 rounded-xl px-3 min-w-[88px]">
-                <span className="text-base">🌐</span>
+              <div className="flex items-center gap-1.5 bg-white/5 border border-white/10 rounded-xl px-3 ">
                 <span className="text-gray-500 text-sm">+</span>
                 <input
                   type="text"

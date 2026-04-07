@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-const API = "http://localhost:3000/api";
+const API = "https://do.velsat.pe:8443/whatsapp/api";
 
 interface UploadedFile { url: string; originalname: string; mimetype: string; }
 interface Recipient { phone: string; text?: string; nombre?: string; [key: string]: string | undefined; }
@@ -9,6 +9,7 @@ interface EventItem { time: string; cls: string; text: string; }
 interface MasivoSectionProps {
   socket: any;
   isConnected: boolean;
+  apiKey: string;
   onToast: (msg: string, type: "success" | "error" | "info") => void;
 }
 
@@ -20,8 +21,8 @@ const fileIcon = (m?: string) =>
 const fmtSize = (b: number) =>
   b < 1024 ? `${b} B` : b < 1048576 ? `${(b/1024).toFixed(1)} KB` : `${(b/1048576).toFixed(1)} MB`;
 
-function DropZone({ accept, hint, uploadedFile, onUpload, onRemove }: {
-  accept: string; hint: string; uploadedFile: UploadedFile | null;
+function DropZone({ accept, hint, uploadedFile, apiKey, onUpload, onRemove }: {
+  accept: string; hint: string; uploadedFile: UploadedFile | null; apiKey: string;
   onUpload: (f: UploadedFile) => void; onRemove: () => void;
 }) {
   const [drag, setDrag] = useState(false);
@@ -38,6 +39,7 @@ function DropZone({ accept, hint, uploadedFile, onUpload, onRemove }: {
       await new Promise<void>((res, rej) => {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", `${API}/upload`);
+        xhr.setRequestHeader("x-api-key", apiKey);
         xhr.upload.onprogress = (e) => { if (e.lengthComputable) setProgress(Math.round(e.loaded/e.total*100)); };
         xhr.onload = () => {
           if (xhr.status === 200) {
@@ -95,7 +97,7 @@ function DropZone({ accept, hint, uploadedFile, onUpload, onRemove }: {
   );
 }
 
-export default function MasivoSection({ socket, isConnected, onToast }: MasivoSectionProps) {
+export default function MasivoSection({ socket, isConnected, apiKey, onToast }: MasivoSectionProps) {
   const [campaignName, setCampaignName] = useState("");
   const [bulkType, setBulkType] = useState<"texto"|"imagen"|"documento">("texto");
   const [uploadedFile, setUploadedFile] = useState<UploadedFile|null>(null);
@@ -200,7 +202,7 @@ export default function MasivoSection({ socket, isConnected, onToast }: MasivoSe
     setCampaignDone(false);
 
     try {
-      const res=await fetch(`${API}/send/bulk`,{method:"POST",headers:{"Content-Type":"application/json"},
+      const res=await fetch(`${API}/send/bulk`,{method:"POST",headers:{"Content-Type":"application/json","x-api-key":apiKey},
         body:JSON.stringify({campaign_name:campaignName,messages,delay_ms:delay})});
       const data=await res.json();
 
@@ -232,7 +234,7 @@ export default function MasivoSection({ socket, isConnected, onToast }: MasivoSe
     if (!confirm("¿Cancelar la campaña en curso?")) return;
     setCancelling(true);
     try {
-      const res=await fetch(`${API}/campaigns/${activeCampaignId}/cancel`,{method:"POST"});
+      const res=await fetch(`${API}/campaigns/${activeCampaignId}/cancel`,{method:"POST",headers:{"x-api-key":apiKey}});
       const data=await res.json();
       if (data.exito||res.ok) {
         setCampaignDone(true);
@@ -358,6 +360,7 @@ export default function MasivoSection({ socket, isConnected, onToast }: MasivoSe
                 accept={bulkType==="imagen"?"image/*":".pdf,.doc,.docx,.xls,.xlsx,.zip,.mp4,.mp3"}
                 hint={bulkType==="imagen"?"JPG, PNG, GIF, WEBP — máx 50MB":"PDF, Word, Excel, ZIP, MP4 — máx 50MB"}
                 uploadedFile={uploadedFile}
+                apiKey={apiKey}
                 onUpload={f=>{setUploadedFile(f);onToast("Archivo subido correctamente","success");}}
                 onRemove={()=>setUploadedFile(null)}
               />

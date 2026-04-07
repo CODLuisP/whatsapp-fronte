@@ -22,7 +22,8 @@ interface LogEntry {
 
 interface ConnectionViewProps {
   apiUrl: string;
-  apiKey: string;          // ← nuevo prop obligatorio
+  apiKey: string;
+  userName: string;
   socket?: any | null;
   onStatusChange?: (estado: EstadoWA, usuario: string | null, numero: string | null) => void;
 }
@@ -70,7 +71,7 @@ function StatCard({ title, value, icon: Icon, accent }: {
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
-export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange }: ConnectionViewProps) {
+export default function ConnectionView({ apiUrl, apiKey, userName, socket, onStatusChange }: ConnectionViewProps) {
 
   const [waStatus,        setWaStatus]        = useState<WAStatus>({ estado: "desconectado" });
   const [qrSrc,           setQrSrc]           = useState<string | null>(null);
@@ -80,13 +81,28 @@ export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange 
   const [logs,            setLogs]            = useState<LogEntry[]>([]);
 
   const waStatusRef    = useRef<WAStatus>({ estado: "desconectado" });
+  const qrPhaseRef     = useRef<null | "waiting" | "qr" | "connected">(null);
   const initializedRef = useRef(false);
   const qrCountRef     = useRef(0);
+  const qrRetryRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const slowPollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fastPollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  // ref que apunta siempre a la última versión de loadStatus — rompe el ciclo fetchQR ↔ loadStatus
+  const loadStatusRef  = useRef<() => Promise<EstadoWA>>(() => Promise.resolve("desconectado" as EstadoWA));
 
   useEffect(() => { waStatusRef.current = waStatus; }, [waStatus]);
+  useEffect(() => { qrPhaseRef.current = qrPhase; }, [qrPhase]);
 
-  // ── Headers con API Key ───────────────────────────────────────────────────
-  // Se recalcula si cambia apiKey
+  // ── helpers de polling ────────────────────────────────────────────────────
+  const stopFastPoll = useCallback(() => {
+    if (fastPollRef.current) { clearInterval(fastPollRef.current); fastPollRef.current = null; }
+  }, []);
+
+  const startFastPoll = useCallback((pollFn: () => void) => {
+    stopFastPoll();
+    fastPollRef.current = setInterval(pollFn, 1_500);
+  }, [stopFastPoll]);
+
   const authHeaders = useRef<Record<string, string>>({});
   useEffect(() => {
     authHeaders.current = apiKey ? { "x-api-key": apiKey } : {};
@@ -101,33 +117,19 @@ export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange 
     setWaStatus(datos);
     onStatusChange?.(datos.estado, datos.usuario ?? null, datos.numero ?? null);
     if (datos.estado === "conectado") {
+      // cancelar retries y fast-poll al conectar
+      if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; }
+      stopFastPoll();
       setQrPhase("connected");
       setQrSrc(null);
     }
-  }, [onStatusChange]);
-
-  // ── loadStatus ────────────────────────────────────────────────────────────
-  const loadStatus = useCallback(async (): Promise<EstadoWA> => {
-    try {
-      const { data } = await axios.get(`${apiUrl}/status`, { headers: authHeaders.current });
-      const raw: WAStatus = data.datos ?? data;
-      applyStatus({ ...raw, numero: normalizeNumero(raw.numero) });
-      return raw.estado;
-    } catch (err: any) {
-      const status = err?.response?.status;
-      if (status === 401 || status === 403) {
-        addLog("API Key inválida o sin permisos (401/403)", "error");
-      } else {
-        addLog("Error al obtener estado", "error");
-      }
-      applyStatus({ estado: "error" });
-      return "error";
-    }
-  }, [apiUrl, applyStatus, addLog]);
+  }, [onStatusChange, stopFastPoll]);
 
   // ── fetchQR ───────────────────────────────────────────────────────────────
-  const fetchQR = useCallback(async () => {
-    if (waStatusRef.current.estado === "conectado") return;
+  const fetchQR = useCallback(async (forceEstado?: EstadoWA) => {
+    const estadoActual = forceEstado ?? waStatusRef.current.estado;
+    if (estadoActual === "conectado") return;
+
     setQrPhase("waiting");
     try {
       const { data } = await axios.get(`${apiUrl}/qr`, { headers: authHeaders.current });
@@ -135,18 +137,24 @@ export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange 
       if (d?.qr) {
         setQrSrc(toSrc(d.qr));
         setQrPhase("qr");
+        // usar ref para evitar ciclo de dependencias con loadStatus
+        startFastPoll(() => loadStatusRef.current());
       } else if (d?.estado === "conectado") {
         applyStatus({ estado: "conectado", usuario: d.usuario, numero: normalizeNumero(d.numero) });
+      } else {
+        setQrPhase("waiting");
+        qrRetryRef.current = setTimeout(() => fetchQR(), 2_000);
       }
     } catch (err: any) {
       const status = err?.response?.status;
       if (status === 401 || status === 403) {
         addLog("API Key inválida — no se pudo cargar el QR", "error");
       } else {
-        addLog("Error al cargar QR", "error");
+        addLog("Error al cargar QR, reintentando...", "warning");
+        qrRetryRef.current = setTimeout(() => fetchQR(), 3_000);
       }
     }
-  }, [apiUrl, applyStatus, addLog]);
+  }, [apiUrl, applyStatus, addLog, startFastPoll]);
 
   // ── desconectar ───────────────────────────────────────────────────────────
   const desconectar = async () => {
@@ -154,12 +162,21 @@ export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange 
     setIsDisconnecting(true);
     try {
       await axios.post(`${apiUrl}/disconnect`, {}, { headers: authHeaders.current });
-      setWaStatus({ estado: "desconectado" });
+
+      // FIX: forzar el estado ANTES de pedir el QR para que la guard no bloquee
+      const estadoReset: WAStatus = { estado: "desconectado", usuario: null, numero: null };
+      setWaStatus(estadoReset);
+      waStatusRef.current = estadoReset;
+      onStatusChange?.("desconectado", null, null);
+
       setQrSrc(null);
       setQrPhase("waiting");
-      onStatusChange?.("desconectado", null, null);
       qrCountRef.current = 0;
-      addLog("Sesión cerrada — esperando nuevo QR...", "warning");
+      addLog("Sesión cerrada — buscando QR...", "warning");
+
+      // FIX: pasar forceEstado para saltarse la guard
+      fetchQR("desconectado");
+
     } catch (err: any) {
       const status = err?.response?.status;
       if (status === 401 || status === 403) {
@@ -171,6 +188,40 @@ export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange 
       setIsDisconnecting(false);
     }
   };
+
+  const loadStatus = useCallback(async (): Promise<EstadoWA> => {
+    try {
+      const { data } = await axios.get(`${apiUrl}/status`, { headers: authHeaders.current });
+      const raw: WAStatus = data.datos ?? data;
+      const normalizado = { ...raw, numero: normalizeNumero(raw.numero) };
+      applyStatus(normalizado);
+
+      if (raw.estado === "conectado") {
+        // solo loguear la primera vez que detectamos conexión (qrPhase no era "connected" aún)
+        if (qrPhaseRef.current !== "connected") {
+          addLog(`WhatsApp conectado${raw.usuario ? ` como ${raw.usuario}` : ""}`, "success");
+        }
+        stopFastPoll();
+        setQrPhase("connected");
+        setQrSrc(null);
+        if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; }
+      }
+
+      return raw.estado;
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 401 || status === 403) {
+        addLog("API Key inválida o sin permisos (401/403)", "error");
+      } else {
+        addLog("Error al obtener estado", "error");
+      }
+      applyStatus({ estado: "error" });
+      return "error";
+    }
+  }, [apiUrl, applyStatus, addLog, stopFastPoll]);
+
+  // mantener ref siempre actualizado (rompe ciclo con fetchQR)
+  loadStatusRef.current = loadStatus;
 
   // ── Socket.IO ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -187,10 +238,19 @@ export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange 
         ? "QR listo — escanea con WhatsApp"
         : `🔄 QR renovado (${qrCountRef.current}) — vuelve a escanear`;
       addLog(msg, "info");
+      // usar ref para evitar ciclo de dependencias
+      startFastPoll(() => loadStatusRef.current());
+      if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; }
     };
 
     const onEstado = ({ estado, usuario, numero, mensaje }: WAStatus & { mensaje?: string }) => {
       applyStatus({ estado, usuario, numero: normalizeNumero(numero) });
+      if (estado === "conectado") {
+        stopFastPoll();
+        setQrPhase("connected");
+        setQrSrc(null);
+        if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; }
+      }
       const fallback: Record<string, string> = {
         reconectando: "Reconectando...",
         conectando:   "Vinculando dispositivo...",
@@ -220,30 +280,36 @@ export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket, applyStatus, addLog]);
 
-  // ── Mount ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
 
-    loadStatus().then((estado) => {
+    loadStatusRef.current().then((estado) => {
       if (estado === "conectado") {
         addLog("WhatsApp conectado y listo", "success");
       } else {
         setQrPhase("waiting");
-        addLog("Esperando QR del servidor...", "info");
-        fetchQR();
+        addLog("Buscando QR...", "info");
+        fetchQR(estado);
       }
     });
 
-    const si = setInterval(loadStatus, 5_000);
-    return () => clearInterval(si);
+    // slow poll — siempre activo cada 5s
+    slowPollRef.current = setInterval(() => loadStatusRef.current(), 5_000);
+
+    return () => {
+      if (slowPollRef.current) clearInterval(slowPollRef.current);
+      stopFastPoll();
+      if (qrRetryRef.current) clearTimeout(qrRetryRef.current);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Derivados ─────────────────────────────────────────────────────────────
-  const estado      = waStatus.estado;
-  const isConnected = estado === "conectado";
-  const showBadge   = qrPhase !== null;
+  const isConnected  = qrPhase === "connected";
+  // badge siempre refleja qrPhase — evita desfase cuando qrPhase ya es "connected" pero waStatus aún no llegó
+  const estadoBadge  = isConnected ? ("conectado" as EstadoWA) : waStatus.estado;
+  const showBadge    = qrPhase !== null;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -266,7 +332,7 @@ export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange 
             <div className="text-center">
               <p className="text-lg font-bold text-white">WhatsApp Conectado</p>
               <p className="text-gray-400 mt-1 text-xs">
-                Como <span className="text-white font-semibold">{waStatus.usuario || "usuario"}</span>
+                Como <span className="text-white font-semibold">{userName|| "usuario"}</span>
               </p>
             </div>
             <button onClick={desconectar} disabled={isDisconnecting}
@@ -288,7 +354,7 @@ export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange 
               <p className="text-base font-bold text-white">Vincular Dispositivo</p>
               <p className="text-xs text-gray-400 mt-0.5">WhatsApp → Dispositivos vinculados → Vincular</p>
             </div>
-            <div className="relative p-3 bg-white rounded-xl group cursor-pointer" onClick={fetchQR}>
+            <div className="relative p-3 bg-white rounded-xl group cursor-pointer" onClick={() => fetchQR()}>
               <img src={qrSrc} alt="QR" className="w-52 h-52" />
               <div className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl">
                 <div className="p-2.5 bg-white rounded-full text-black">
@@ -296,7 +362,7 @@ export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange 
                 </div>
               </div>
             </div>
-            <button onClick={fetchQR}
+            <button onClick={() => fetchQR()}
               className="px-4 py-1.5 bg-white/5 hover:bg-white/10 text-white rounded-lg text-xs transition-all border border-white/10">
               ↻ Actualizar QR
             </button>
@@ -309,14 +375,14 @@ export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange 
             <div className="w-52 h-52 bg-white/5 rounded-xl flex flex-col items-center justify-center gap-3 border border-white/5">
               <RefreshCw className="w-7 h-7 text-gray-500 animate-spin" />
               <p className="text-[11px] text-gray-500 text-center px-4 leading-relaxed">
-                {estado === "conectando"   ? "📲 Vinculando dispositivo..." :
-                 estado === "reconectando" ? "🔄 Verificando vinculación..." :
-                 qrPhase === null          ? "" :
-                                            "Esperando QR..."}
+                {waStatus.estado === "conectando"   ? "📲 Vinculando dispositivo..." :
+                 waStatus.estado === "reconectando" ? "🔄 Verificando vinculación..." :
+                 qrPhase === null                   ? "" :
+                                                      "Esperando QR..."}
               </p>
             </div>
             {qrPhase !== null && (
-              <button onClick={fetchQR}
+              <button onClick={() => fetchQR("desconectado")}
                 className="px-4 py-1.5 bg-white/5 hover:bg-white/10 text-white rounded-lg text-xs transition-all border border-white/10">
                 ↻ Forzar QR
               </button>
@@ -329,20 +395,20 @@ export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange 
       <div className="flex flex-col gap-4">
 
         <div className="grid grid-cols-2 gap-3">
-          <StatCard title="Usuario" value={waStatus.usuario || "—"} icon={Users}         accent="bg-blue-500"  />
+          <StatCard title="Usuario" value={userName || "—"} icon={Users}         accent="bg-blue-500"  />
           <StatCard title="Número"  value={waStatus.numero  || "—"} icon={MessageSquare} accent="bg-[#25D366]" />
         </div>
 
         {/* Badge */}
-        <div className="bg-[#1a1a1a] border border-white/5 rounded-xl px-3 py-2.5 flex items-center justify-between min-h-[44px]">
+        <div className="bg-[#1a1a1a] border border-white/5 rounded-xl px-3 py-2.5 flex items-center justify-between min-h-11">
           {showBadge ? (
             <>
               <div className="flex items-center gap-2.5">
                 <div className="relative flex h-2.5 w-2.5">
-                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${DOT_COLOR[estado]} opacity-60`} />
-                  <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${DOT_COLOR[estado]}`} />
+                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${DOT_COLOR[estadoBadge]} opacity-60`} />
+                  <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${DOT_COLOR[estadoBadge]}`} />
                 </div>
-                <span className={`text-xs font-semibold ${TEXT_COLOR[estado]}`}>{LABELS[estado]}</span>
+                <span className={`text-xs font-semibold ${TEXT_COLOR[estadoBadge]}`}>{LABELS[estadoBadge]}</span>
               </div>
               <div className="flex items-center gap-1.5 text-[10px] text-gray-600 font-mono uppercase tracking-wider">
                 <span className={`w-1.5 h-1.5 rounded-full ${socketOk ? "bg-[#25D366]" : "bg-gray-700"}`} />
@@ -358,7 +424,7 @@ export default function ConnectionView({ apiUrl, apiKey, socket, onStatusChange 
         </div>
 
         {/* Log box */}
-        <div className="bg-[#111111] border border-white/5 rounded-2xl flex flex-col flex-1 min-h-[260px]">
+        <div className="bg-[#111111] border border-white/5 rounded-2xl flex flex-col flex-1 min6-h-65">
           <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Terminal className="w-3.5 h-3.5 text-[#25D366]" />
