@@ -230,40 +230,43 @@ export default function ConnectionView({ apiUrl, apiKey, userName, socket, onSta
     const onConn = () => { setSocketOk(true);  addLog("Socket.IO conectado", "success"); };
     const onDisc = () => { setSocketOk(false); addLog("Socket.IO desconectado", "warning"); };
 
-    const onQR = ({ qr }: { qr: string }) => {
-      qrCountRef.current += 1;
-      setQrSrc(toSrc(qr));
-      setQrPhase("qr");
-      const msg = qrCountRef.current === 1
-        ? "QR listo — escanea con WhatsApp"
-        : `🔄 QR renovado (${qrCountRef.current}) — vuelve a escanear`;
-      addLog(msg, "info");
-      // usar ref para evitar ciclo de dependencias
-      startFastPoll(() => loadStatusRef.current());
-      if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; }
-    };
+const onQR = ({ qr }: { qr: string }) => {
+  if (qrPhaseRef.current === "connected") return; // ← ignorar QR si ya está conectado
+  
+  qrCountRef.current += 1;
+  setQrSrc(toSrc(qr));
+  setQrPhase("qr");
+  const msg = qrCountRef.current === 1
+    ? "QR listo — escanea con WhatsApp"
+    : `🔄 QR renovado (${qrCountRef.current}) — vuelve a escanear`;
+  addLog(msg, "info");
+  startFastPoll(() => loadStatusRef.current());
+  if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; }
+};
 
-    const onEstado = ({ estado, usuario, numero, mensaje }: WAStatus & { mensaje?: string }) => {
-      applyStatus({ estado, usuario, numero: normalizeNumero(numero) });
-      if (estado === "conectado") {
-        stopFastPoll();
-        setQrPhase("connected");
-        setQrSrc(null);
-        if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; }
-      }
-      const fallback: Record<string, string> = {
-        reconectando: "Reconectando...",
-        conectando:   "Vinculando dispositivo...",
-        conectado:    usuario ? `Conectado como ${usuario}` : "WhatsApp conectado",
-        desconectado: "Desconectado",
-        error:        "Error de conexión",
-        qr:           "Generando QR...",
-      };
-      addLog(
-        mensaje || fallback[estado] || `Estado: ${estado}`,
-        estado === "conectado" ? "success" : "info"
-      );
-    };
+const onEstado = ({ estado, usuario, numero, mensaje }: WAStatus & { mensaje?: string }) => {
+  if (qrPhaseRef.current === "connected" && estado !== "desconectado" && estado !== "error") return; // ← ignorar si ya conectado
+  
+  applyStatus({ estado, usuario, numero: normalizeNumero(numero) });
+  if (estado === "conectado") {
+    stopFastPoll();
+    setQrPhase("connected");
+    setQrSrc(null);
+    if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; }
+  }
+  const fallback: Record<string, string> = {
+    reconectando: "Reconectando...",
+    conectando:   "Vinculando dispositivo...",
+    conectado:    usuario ? `Conectado como ${usuario}` : "WhatsApp conectado",
+    desconectado: "Desconectado",
+    error:        "Error de conexión",
+    qr:           "Generando QR...",
+  };
+  addLog(
+    mensaje || fallback[estado] || `Estado: ${estado}`,
+    estado === "conectado" ? "success" : "info"
+  );
+};
 
     socket.on("connect",          onConn);
     socket.on("disconnect",       onDisc);

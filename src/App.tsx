@@ -106,7 +106,9 @@ export default function App() {
 
   // ── Socket — solo se conecta aquí, se pasa a los hijos ───────────────────
   useEffect(() => {
-    socketRef.current = io(BASE_URL);
+    socketRef.current = io('https://do.velsat.pe:8443', {
+  path: '/whatsapp/socket.io'
+});
     return () => {
       socketRef.current?.disconnect();
     };
