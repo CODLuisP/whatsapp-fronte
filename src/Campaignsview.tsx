@@ -1,146 +1,195 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { BarChart3, Search, X, RefreshCw, Trash2 } from "lucide-react";
+import { BarChart3, Search, X, RefreshCw, Trash2, MessageSquare, Clock } from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+} from "recharts";
 
-// ─── TYPES ───────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 interface MessageDetail {
-  id: string;
-  telefono: string;
-  texto: string;
-  tipo: string;
-  estado: "enviado" | "fallido" | "pendiente";
-  error?: string;
+  id: string; telefono: string; texto: string; tipo: string;
+  estado: "enviado" | "fallido" | "pendiente"; error?: string;
 }
-
 interface Campaign {
-  id: string;
-  nombre: string;
-  estado: "en_progreso" | "completada" | "cancelada" | "error" | "pendiente";
-  total_mensajes: number;
-  enviados: number;
-  fallidos: number;
-  pendientes: number;
-  porcentaje_completado: number;
-  delay_ms: number;
-  created_at: string;
-  creado_en?: string;
+  id: string; nombre: string;
+  estado: "en_proceso" | "completada" | "completada_con_errores" | "cancelada" | "error" | "pendiente";
+  total_mensajes: number; enviados: number; fallidos: number; pendientes: number;
+  porcentaje_completado: number; delay_ms: number; created_at: string; creado_en?: string;
 }
-
-interface CampaignDetail extends Campaign {
-  mensajes: MessageDetail[];
-}
-
+interface CampaignDetail extends Campaign { mensajes: MessageDetail[]; }
 interface CampaignsViewProps {
-  baseUrl: string;
-  apiKey: string;
+  baseUrl: string; apiKey: string;
   onToast: (message: string, type: "success" | "error" | "info") => void;
 }
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 const statusConfig = {
-  completada:  { label: "Completada",  color: "#25D366", bg: "#25D36615", dot: "#25D366" },
-  en_progreso: { label: "En progreso", color: "#58a6ff", bg: "#58a6ff15", dot: "#58a6ff" },
-  cancelada:   { label: "Cancelada",   color: "#e3b341", bg: "#e3b34115", dot: "#e3b341" },
-  error:       { label: "Error",       color: "#f85149", bg: "#f8514915", dot: "#f85149" },
-  pendiente:   { label: "Pendiente",   color: "#8b949e", bg: "#8b949e15", dot: "#8b949e" },
+  completada:             { label: "Completada",   color: "#4ade80", bg: "#4ade8015" },
+  completada_con_errores: { label: "Con errores",  color: "#fb923c", bg: "#fb923c15" },
+  en_proceso:             { label: "En proceso",   color: "#60a5fa", bg: "#60a5fa15" },
+  cancelada:              { label: "Cancelada",    color: "#fbbf24", bg: "#fbbf2415" },
+  error:                  { label: "Error",        color: "#f87171", bg: "#f8717115" },
+  pendiente:              { label: "Pendiente",    color: "#9ca3af", bg: "#9ca3af15" },
+};
+const msgStatusConfig = {
+  enviado:   { color: "#4ade80", bg: "#4ade8015" },
+  fallido:   { color: "#f87171", bg: "#f8717115" },
+  pendiente: { color: "#60a5fa", bg: "#60a5fa15" },
 };
 
-const msgStatusConfig = {
-  enviado:   { color: "#25D366", bg: "#25D36615" },
-  fallido:   { color: "#f85149", bg: "#f8514915" },
-  pendiente: { color: "#58a6ff", bg: "#58a6ff15" },
-};
 
 const fmtDate = (d: string) =>
-  new Date(d).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  new Date(d).toLocaleDateString("es-PE", {
+    day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
 
+const fmtDateShort = (d: string) =>
+  new Date(d).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" });
 
+const fmtTime = (d: string) =>
+  new Date(d).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: false });
 
-// ─── STAT CARD ────────────────────────────────────────────────────────────
-function StatCard({ label, value, color }: { label: string; value: number | string; color: string }) {
-  return (
-    <div style={{ background: "#0d1117", border: `1px solid ${color}25`, borderRadius: 10, padding: "14px 16px" }}>
-      <div style={{ fontSize: 10, color: "#8b949e", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
-    </div>
-  );
-}
+// ─── ProgressBar ─────────────────────────────────────────────────────────────
 
-// ─── PROGRESS BAR ────────────────────────────────────────────────────────
 function ProgressBar({ pct, color }: { pct: number; color: string }) {
   return (
-    <div style={{ height: 4, background: "#ffffff08", borderRadius: 4, overflow: "hidden" }}>
-      <motion.div
-        initial={{ width: 0 }}
-        animate={{ width: `${pct}%` }}
+    <div className="h-1 bg-white/[0.05] rounded-full overflow-hidden">
+      <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }}
         transition={{ duration: 0.6, ease: "easeOut" }}
-        style={{ height: "100%", background: color, borderRadius: 4 }}
-      />
+        style={{ height: "100%", background: color, borderRadius: 4 }} />
     </div>
   );
 }
 
-// ─── CAMPAIGN CARD ───────────────────────────────────────────────────────
+// ─── Last 5 Days Chart ────────────────────────────────────────────────────────
+
+function Last5DaysChart({ campaigns }: { campaigns: Campaign[] }) {
+  const data = useMemo(() => {
+    // Generar los últimos 5 días (hoy + 4 anteriores)
+    const days: { date: Date; label: string; key: string }[] = [];
+    for (let i = 4; i >= 0; i--) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10); // "YYYY-MM-DD"
+      const label = i === 0 ? "Hoy" : d.toLocaleDateString("es-PE", { day: "2-digit", month: "short" });
+      days.push({ date: d, label, key });
+    }
+
+    // Sumar enviados por día
+    const counts: Record<string, number> = {};
+    days.forEach(d => { counts[d.key] = 0; });
+
+    campaigns.forEach(c => {
+      const fecha = c.created_at || c.creado_en;
+      if (!fecha) return;
+      const key = new Date(fecha).toISOString().slice(0, 10);
+      if (key in counts) counts[key] += c.enviados || 0;
+    });
+
+    return days.map(d => ({ name: d.label, mensajes: counts[d.key], key: d.key }));
+  }, [campaigns]);
+
+  const maxVal = Math.max(...data.map(d => d.mensajes), 1);
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="bg-[#040704] border border-white/[0.08] rounded-lg px-3 py-2">
+        <p className="text-[10px] text-white/60 font-bold">{label}</p>
+        <p className="text-sm font-black text-[#4ade80]">{payload[0].value.toLocaleString()}</p>
+        <p className="text-[9px] text-white/30">mensajes enviados</p>
+      </div>
+    );
+  };
+
+  const totalPeriod = data.reduce((a, d) => a + d.mensajes, 0);
+
+  return (
+    <div className="bg-[#040704] rounded-xl p-4">
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <p className="text-[8px] font-bold uppercase tracking-widest text-white/50 mb-0.5">Analítica</p>
+          <h3 className="text-sm font-black text-white">Últimos 5 días</h3>
+        </div>
+        <div className="text-right">
+          <p className="text-lg font-black text-[#4ade80] leading-none">{totalPeriod.toLocaleString()}</p>
+          <p className="text-[8px] text-white/30 uppercase tracking-wider">msgs en el periodo</p>
+        </div>
+      </div>
+      <ResponsiveContainer width="100%" height={140}>
+        <BarChart data={data} barCategoryGap="35%">
+          <XAxis dataKey="name"
+            tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11, fontWeight: 700 }}
+            axisLine={false} tickLine={false} />
+          <YAxis hide />
+          <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
+          <Bar dataKey="mensajes" radius={[5, 5, 0, 0]}>
+            {data.map((entry, index) => (
+              <Cell key={index}
+                fill={entry.mensajes === maxVal && maxVal > 0 ? "#4ade80" : "rgba(74,222,128,0.2)"} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// ─── Campaign Card ────────────────────────────────────────────────────────────
+
 function CampaignCard({ c, onClick }: { c: Campaign; onClick: () => void }) {
-  const cfg = statusConfig[c.estado] ?? statusConfig.pendiente;
-  const pct = c.porcentaje_completado ?? 0;
+  const cfg   = statusConfig[c.estado] ?? statusConfig.pendiente;
+  const pct   = c.porcentaje_completado ?? 0;
   const fecha = c.created_at || c.creado_en || "";
 
   return (
-    <motion.div
-      layoutId={`card-${c.id}`}
-      whileHover={{ y: -2 }}
-      onClick={onClick}
-      style={{
-        background: "#111", border: "1px solid #ffffff08", borderRadius: 14,
-        padding: 20, cursor: "pointer", transition: "border-color 0.2s",
-        position: "relative", overflow: "hidden",
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#ffffff18")}
-      onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#ffffff08")}
-    >
-      {/* Glow accent */}
-      <div style={{
-        position: "absolute", top: 0, right: 0, width: 80, height: 80,
-        background: `radial-gradient(circle, ${cfg.color}12 0%, transparent 70%)`,
-        pointerEvents: "none",
-      }} />
+    <motion.div layoutId={`card-${c.id}`} whileHover={{ y: -2 }} onClick={onClick}
+      className="bg-[#040704] rounded-xl p-3 cursor-pointer relative overflow-hidden transition-colors hover:bg-[#060a06]">
+      <div className="absolute top-0 right-0 w-16 h-16 pointer-events-none"
+        style={{ background: `radial-gradient(circle, ${cfg.color}08 0%, transparent 70%)` }} />
 
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
-        <div style={{ flex: 1, minWidth: 0, marginRight: 10 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, color: "#e6edf3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.nombre}</div>
-          <div style={{ fontSize: 10, color: "#444", marginTop: 3, fontFamily: "monospace" }}>{fecha ? fmtDate(fecha) : "—"}</div>
-        </div>
-        <div style={{
-          background: cfg.bg, color: cfg.color, fontSize: 9, fontWeight: 800,
-          padding: "3px 8px", borderRadius: 5, textTransform: "uppercase", letterSpacing: "0.08em",
-          whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5,
-        }}>
-          <span style={{ width: 5, height: 5, borderRadius: "50%", background: cfg.dot, display: "inline-block", boxShadow: c.estado === "en_progreso" ? `0 0 6px ${cfg.dot}` : "none" }} />
+      <div className="flex justify-between items-start gap-2 mb-2.5">
+        <p className="text-xs font-bold text-white truncate flex-1">{c.nombre}</p>
+        <span className="text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded shrink-0 flex items-center gap-1"
+          style={{ background: cfg.bg, color: cfg.color }}>
+          <span className="w-1 h-1 rounded-full" style={{ background: cfg.color }} />
           {cfg.label}
-        </div>
+        </span>
       </div>
 
+      {/* Fecha y hora */}
+      {fecha && (
+        <div className="flex items-center gap-1.5 mb-2.5">
+          <Clock className="w-2.5 h-2.5 text-white/25 shrink-0" />
+          <span className="text-[9px] text-white/40 font-mono">{fmtDateShort(fecha)}</span>
+          <span className="text-[9px] text-[#4ade80]/60 font-mono font-bold">{fmtTime(fecha)}</span>
+        </div>
+      )}
+
       {/* Progress */}
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 6 }}>
-          <span style={{ color: "#8b949e" }}>Progreso</span>
-          <span style={{ color: cfg.color, fontWeight: 700 }}>{pct}%</span>
+      <div className="mb-2.5">
+        <div className="flex justify-between text-[9px] mb-1">
+          <span className="text-white/30">Progreso</span>
+          <span className="font-bold" style={{ color: cfg.color }}>{pct}%</span>
         </div>
         <ProgressBar pct={pct} color={cfg.color} />
       </div>
 
-      {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6 }}>
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-1.5">
         {[
-          { l: "Enviados", v: c.enviados, c: "#25D366" },
-          { l: "Fallidos", v: c.fallidos, c: "#f85149" },
-          { l: "Total", v: c.total_mensajes, c: "#8b949e" },
+          { l: "Enviados", v: c.enviados,      c: "#4ade80" },
+          { l: "Fallidos", v: c.fallidos,       c: "#f87171" },
+          { l: "Total",    v: c.total_mensajes, c: "#9ca3af" },
         ].map(({ l, v, c: col }) => (
-          <div key={l} style={{ textAlign: "center", background: "#0d1117", borderRadius: 7, padding: "7px 4px" }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: col }}>{v}</div>
-            <div style={{ fontSize: 9, color: "#444", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>{l}</div>
+          <div key={l} className="bg-white/[0.03] rounded-lg py-1.5 text-center">
+            <p className="text-sm font-black leading-none" style={{ color: col }}>{v}</p>
+            <p className="text-[7px] text-white/25 uppercase tracking-wider mt-0.5 font-bold">{l}</p>
           </div>
         ))}
       </div>
@@ -148,36 +197,29 @@ function CampaignCard({ c, onClick }: { c: Campaign; onClick: () => void }) {
   );
 }
 
-// ─── DETAIL DRAWER ───────────────────────────────────────────────────────
-function DetailDrawer({
-  campaignId, baseUrl, apiKey, onClose, onToast, onDeleted,
-}: {
-  campaignId: string;
-  baseUrl: string;
-  apiKey: string;
-  onClose: () => void;
-  onToast: (m: string, t: "success" | "error" | "info") => void;
-  onDeleted: () => void;
+// ─── Detail Drawer ────────────────────────────────────────────────────────────
+
+function DetailDrawer({ campaignId, baseUrl, apiKey, onClose, onToast, onDeleted }: {
+  campaignId: string; baseUrl: string; apiKey: string;
+  onClose: () => void; onToast: (m: string, t: "success"|"error"|"info") => void; onDeleted: () => void;
 }) {
-  const [detail, setDetail] = useState<CampaignDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [detail,     setDetail]     = useState<CampaignDetail | null>(null);
+  const [loading,    setLoading]    = useState(true);
   const [cancelling, setCancelling] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [msgFilter, setMsgFilter] = useState<"all" | "enviado" | "fallido" | "pendiente">("all");
+  const [deleting,   setDeleting]   = useState(false);
+  const [msgFilter,  setMsgFilter]  = useState<"all"|"enviado"|"fallido"|"pendiente">("all");
+  const [expanded,   setExpanded]   = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       try {
-        const r = await fetch(`${baseUrl}/api/campaigns/${campaignId}`, { headers: {"x-api-key": apiKey} });
+        const r = await fetch(`${baseUrl}/api/campaigns/${campaignId}`, { headers: { "x-api-key": apiKey } });
         const d = await r.json();
         const raw = d.datos;
         setDetail({ ...raw.campaña, mensajes: raw.mensajes || [] });
-      } catch {
-        onToast("Error cargando detalle", "error");
-      } finally {
-        setLoading(false);
-      }
+      } catch { onToast("Error cargando detalle", "error"); }
+      finally { setLoading(false); }
     };
     load();
   }, [campaignId]);
@@ -185,190 +227,212 @@ function DetailDrawer({
   const cancel = async () => {
     setCancelling(true);
     try {
-      await fetch(`${baseUrl}/api/campaigns/${campaignId}/cancel`, { method: "POST", headers: {"x-api-key": apiKey} });
-      onToast("Campaña cancelada", "info");
-      onClose();
-      onDeleted();
-    } catch {
-      onToast("Error al cancelar", "error");
-    } finally {
-      setCancelling(false);
-    }
+      await fetch(`${baseUrl}/api/campaigns/${campaignId}/cancel`, { method: "POST", headers: { "x-api-key": apiKey } });
+      onToast("Campaña cancelada", "info"); onClose(); onDeleted();
+    } catch { onToast("Error al cancelar", "error"); }
+    finally { setCancelling(false); }
   };
 
   const del = async () => {
     if (!confirm("¿Eliminar esta campaña del historial?")) return;
     setDeleting(true);
     try {
-      await fetch(`${baseUrl}/api/campaigns/${campaignId}`, { method: "DELETE", headers: {"x-api-key": apiKey} });
-      onToast("Campaña eliminada", "success");
-      onClose();
-      onDeleted();
-    } catch {
-      onToast("Error al eliminar", "error");
-    } finally {
-      setDeleting(false);
-    }
+      await fetch(`${baseUrl}/api/campaigns/${campaignId}`, { method: "DELETE", headers: { "x-api-key": apiKey } });
+      onToast("Campaña eliminada", "success"); onClose(); onDeleted();
+    } catch { onToast("Error al eliminar", "error"); }
+    finally { setDeleting(false); }
   };
 
   const filteredMsgs = detail?.mensajes.filter(m => msgFilter === "all" || m.estado === msgFilter) ?? [];
   const cfg = detail ? (statusConfig[detail.estado] ?? statusConfig.pendiente) : statusConfig.pendiente;
+  const fecha = detail?.created_at || detail?.creado_en || "";
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", justifyContent: "flex-end" }}>
-      {/* Backdrop */}
-      <motion.div
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        onClick={onClose}
-        style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}
-      />
+    <div className="fixed inset-0 z-[200] flex justify-end">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        onClick={onClose} className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
 
-      {/* Drawer */}
-      <motion.div
-        initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
+      <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
         transition={{ type: "spring", damping: 28, stiffness: 220 }}
-        style={{
-          width: "100%", maxWidth: 640, background: "#111", borderLeft: "1px solid #ffffff10",
-          height: "100%", position: "relative", display: "flex", flexDirection: "column",
-          boxShadow: "-20px 0 60px rgba(0,0,0,0.5)",
-        }}
-      >
+        className="w-full max-w-2xl relative flex flex-col h-full"
+        style={{ background: "#050805", borderLeft: "1px solid rgba(255,255,255,0.06)" }}>
+
         {/* Header */}
-        <div style={{ padding: "24px 28px", borderBottom: "1px solid #ffffff08", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div style={{ flex: 1, minWidth: 0, marginRight: 16 }}>
+        <div className="px-5 py-4 border-b border-white/[0.05] flex justify-between items-start shrink-0">
+          <div className="flex-1 min-w-0 mr-4">
             {loading ? (
-              <div style={{ height: 22, width: 200, background: "#ffffff08", borderRadius: 6, marginBottom: 8 }} />
+              <div className="h-5 w-40 bg-white/[0.05] rounded animate-pulse" />
             ) : (
               <>
-                <h3 style={{ fontSize: 20, fontWeight: 800, color: "#e6edf3", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{detail?.nombre}</h3>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
-                  <div style={{ background: cfg.bg, color: cfg.color, fontSize: 9, fontWeight: 800, padding: "3px 8px", borderRadius: 5, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                    {cfg.label}
-                  </div>
-                  <span style={{ fontSize: 11, color: "#444", fontFamily: "monospace" }}>{detail?.created_at ? fmtDate(detail.created_at) : ""}</span>
+                <h3 className="text-base font-black text-white truncate">{detail?.nombre}</h3>
+                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                  <span className="text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded"
+                    style={{ background: cfg.bg, color: cfg.color }}>{cfg.label}</span>
+                  {fecha && (
+                    <>
+                      <span className="text-[10px] text-white/40 font-mono">{fmtDateShort(fecha)}</span>
+                      <span className="text-[10px] text-[#4ade80]/70 font-mono font-bold">{fmtTime(fecha)}</span>
+                    </>
+                  )}
                 </div>
               </>
             )}
           </div>
           <button onClick={onClose}
-            style={{ background: "#ffffff08", border: "none", color: "#8b949e", padding: 8, borderRadius: 9, cursor: "pointer", display: "flex" }}>
-            <X size={18} />
+            className="bg-white/[0.05] text-white/40 hover:text-white p-2 rounded-lg transition-colors shrink-0">
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Body */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }}>
+        <div className="flex-1 overflow-y-auto p-4 space-y-4"
+          style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.05) transparent" }}>
           {loading ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {[80, 60, 100, 40].map((w, i) => (
-                <div key={i} style={{ height: 14, width: `${w}%`, background: "#ffffff06", borderRadius: 6 }} />
+            <div className="space-y-3">
+              {[80,60,100,40].map((w,i) => (
+                <div key={i} className="h-3 bg-white/[0.04] rounded animate-pulse" style={{ width: `${w}%` }} />
               ))}
             </div>
           ) : detail ? (
             <>
               {/* Stats */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 24 }}>
-                <StatCard label="Total" value={detail.total_mensajes} color="#8b949e" />
-                <StatCard label="Enviados" value={detail.enviados} color="#25D366" />
-                <StatCard label="Fallidos" value={detail.fallidos} color="#f85149" />
-                <StatCard label="Pendientes" value={detail.pendientes} color="#58a6ff" />
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { l: "Total",      v: detail.total_mensajes, c: "#9ca3af" },
+                  { l: "Enviados",   v: detail.enviados,       c: "#4ade80" },
+                  { l: "Fallidos",   v: detail.fallidos,       c: "#f87171" },
+                  { l: "Pendientes", v: detail.pendientes,     c: "#60a5fa" },
+                ].map(({ l, v, c }) => (
+                  <div key={l} className="bg-white/[0.03] rounded-lg p-2.5 text-center">
+                    <p className="text-xl font-black leading-none" style={{ color: c }}>{v}</p>
+                    <p className="text-[8px] text-white/40 uppercase tracking-wider mt-0.5 font-bold">{l}</p>
+                  </div>
+                ))}
               </div>
 
               {/* Progress */}
-              <div style={{ background: "#0d1117", border: "1px solid #ffffff08", borderRadius: 10, padding: "14px 16px", marginBottom: 24 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                  <span style={{ fontSize: 11, color: "#8b949e" }}>Progreso total</span>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: cfg.color }}>{detail.porcentaje_completado}%</span>
+              <div className="bg-white/[0.03] rounded-xl p-3">
+                <div className="flex justify-between text-[10px] mb-2">
+                  <span className="text-white/50">Progreso total</span>
+                  <span className="font-bold" style={{ color: cfg.color }}>{detail.porcentaje_completado}%</span>
                 </div>
                 <ProgressBar pct={detail.porcentaje_completado} color={cfg.color} />
-                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 10, color: "#444" }}>
-                  <span>Delay: {(detail.delay_ms / 1000).toFixed(1)}s entre mensajes</span>
-                  <span>ID: {detail.id}</span>
+                <div className="flex justify-between mt-2 text-[9px] font-mono">
+                  <span className="text-white/30">Delay: {(detail.delay_ms / 1000).toFixed(1)}s</span>
+                  <span className="text-white/20">ID: {detail.id}</span>
                 </div>
               </div>
 
-              {/* Messages table */}
+              {/* Messages list */}
               <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <div style={{ fontSize: 11, color: "#8b949e", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
+                  <span className="text-[8px] font-bold uppercase tracking-widest text-white/60">
                     Mensajes ({filteredMsgs.length})
-                  </div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {(["all", "enviado", "fallido", "pendiente"] as const).map(f => (
+                  </span>
+                  <div className="flex gap-1">
+                    {(["all","enviado","fallido","pendiente"] as const).map(f => (
                       <button key={f} onClick={() => setMsgFilter(f)}
-                        style={{
-                          background: msgFilter === f ? "#25D36615" : "#0d1117",
-                          border: `1px solid ${msgFilter === f ? "#25D36640" : "#30363d"}`,
-                          color: msgFilter === f ? "#25D366" : "#555",
-                          padding: "4px 10px", borderRadius: 6, cursor: "pointer",
-                          fontSize: 10, fontWeight: 700, fontFamily: "inherit",
-                        }}>
+                        className={`text-[9px] font-bold px-2 py-1 rounded transition-all ${
+                          msgFilter === f ? "bg-[#4ade80]/10 text-[#4ade80]" : "text-white/30 hover:text-white/60"}`}>
                         {f === "all" ? "Todos" : f.charAt(0).toUpperCase() + f.slice(1)}
                       </button>
                     ))}
                   </div>
                 </div>
 
-                <div style={{ background: "#0d1117", border: "1px solid #ffffff08", borderRadius: 10, overflow: "hidden", maxHeight: 360, overflowY: "auto" }}>
+                <div className="space-y-1.5">
                   {filteredMsgs.length === 0 ? (
-                    <div style={{ padding: "32px 0", textAlign: "center", color: "#333", fontSize: 13 }}>Sin mensajes en esta categoría</div>
-                  ) : (
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                      <thead>
-                        <tr style={{ borderBottom: "1px solid #ffffff08", background: "#0a0a0a", position: "sticky", top: 0 }}>
-                          {["Teléfono", "Texto", "Tipo", "Estado", "Error"].map(h => (
-                            <th key={h} style={{ padding: "9px 12px", textAlign: "left", color: "#444", fontWeight: 700, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredMsgs.map((m, i) => {
-                          const mc = msgStatusConfig[m.estado] ?? msgStatusConfig.pendiente;
-                          return (
-                            <tr key={i} style={{ borderBottom: "1px solid #ffffff04" }}>
-                              <td style={{ padding: "8px 12px", color: "#25D366", fontFamily: "monospace", whiteSpace: "nowrap" }}>+{m.telefono}</td>
-                              <td style={{ padding: "8px 12px", color: "#8b949e", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.texto || "—"}</td>
-                              <td style={{ padding: "8px 12px", color: "#555" }}>{m.tipo}</td>
-                              <td style={{ padding: "8px 12px" }}>
-                                <span style={{ background: mc.bg, color: mc.color, fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 4, textTransform: "uppercase" }}>
-                                  {m.estado}
-                                </span>
-                              </td>
-                              <td style={{ padding: "8px 12px", color: "#f85149", fontSize: 11, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.error || ""}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  )}
+                    <div className="py-8 text-center text-white/20 text-xs">Sin mensajes en esta categoría</div>
+                  ) : filteredMsgs.map((m, i) => {
+                    const mc = msgStatusConfig[m.estado] ?? msgStatusConfig.pendiente;
+                    const isOpen = expanded === m.id;
+                    return (
+                      <motion.div key={m.id ?? i} layout
+                        className="bg-white/[0.03] rounded-xl overflow-hidden cursor-pointer"
+                        onClick={() => setExpanded(isOpen ? null : m.id)}>
+
+                        {/* Row */}
+                        <div className="flex items-center gap-3 px-3 py-2.5">
+                          {/* Estado dot */}
+                          <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: mc.color }} />
+
+                          {/* Teléfono */}
+                          <span className="text-[11px] font-mono text-[#4ade80] shrink-0 w-28">
+                            +{m.telefono}
+                          </span>
+
+                          {/* Texto preview */}
+                          <span className={`text-[11px] flex-1 transition-all ${isOpen ? "text-white/70" : "text-white/40 truncate"}`}>
+                            {m.texto || "—"}
+                          </span>
+
+                          {/* Tipo + Estado */}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-[8px] text-white/25 uppercase hidden sm:block">{m.tipo}</span>
+                            <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded"
+                              style={{ background: mc.bg, color: mc.color }}>{m.estado}</span>
+                          </div>
+                        </div>
+
+                        {/* Expanded */}
+                        <AnimatePresence>
+                          {isOpen && (
+                            <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }}
+                              className="overflow-hidden">
+                              <div className="px-3 pb-3 space-y-2 border-t border-white/[0.04] pt-2.5">
+                                {/* Mensaje completo */}
+                                {m.texto && (
+                                  <div>
+                                    <p className="text-[8px] font-bold uppercase tracking-widest text-white/30 mb-1 flex items-center gap-1">
+                                      <MessageSquare className="w-2.5 h-2.5" /> Mensaje completo
+                                    </p>
+                                    <p className="text-xs text-white/70 leading-relaxed bg-black/20 rounded-lg px-3 py-2">
+                                      {m.texto}
+                                    </p>
+                                  </div>
+                                )}
+                                {/* Error */}
+                                {m.error && (
+                                  <div className="bg-red-500/[0.07] rounded-lg px-3 py-2">
+                                    <p className="text-[8px] font-bold uppercase tracking-widest text-red-400/60 mb-0.5">Error</p>
+                                    <p className="text-xs text-red-400">{m.error}</p>
+                                  </div>
+                                )}
+                                {/* Meta */}
+                                <div className="flex gap-4 text-[9px] font-mono text-white/25">
+                                  <span>Tipo: <span className="text-white/45">{m.tipo}</span></span>
+                                  <span>ID: <span className="text-white/45">{m.id}</span></span>
+                                </div>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </motion.div>
+                    );
+                  })}
                 </div>
               </div>
             </>
           ) : null}
         </div>
 
-        {/* Footer actions */}
+        {/* Footer */}
         {detail && (
-          <div style={{ padding: "16px 28px", borderTop: "1px solid #ffffff08", display: "flex", gap: 10 }}>
-            {detail.estado === "en_progreso" && (
+          <div className="px-4 py-3 border-t border-white/[0.05] flex gap-2 shrink-0">
+            {detail.estado === "en_proceso" && (
               <button onClick={cancel} disabled={cancelling}
-                style={{
-                  flex: 1, background: "#f8514910", border: "1px solid #f8514930", color: "#f85149",
-                  padding: "11px 0", borderRadius: 9, cursor: cancelling ? "not-allowed" : "pointer",
-                  fontWeight: 700, fontSize: 13, fontFamily: "inherit", opacity: cancelling ? 0.5 : 1,
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                }}>
+                className="flex-1 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2
+                           bg-red-500/10 hover:bg-red-500/15 text-red-400 border border-red-500/15
+                           disabled:opacity-40 transition-all">
+                {cancelling ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
                 {cancelling ? "Cancelando..." : "⏸ Cancelar campaña"}
               </button>
             )}
             <button onClick={del} disabled={deleting}
-              style={{
-                background: "#ffffff08", border: "1px solid #ffffff10", color: "#8b949e",
-                padding: "11px 16px", borderRadius: 9, cursor: deleting ? "not-allowed" : "pointer",
-                fontWeight: 700, fontSize: 13, fontFamily: "inherit", opacity: deleting ? 0.5 : 1,
-                display: "flex", alignItems: "center", gap: 6,
-              }}>
-              <Trash2 size={14} />
+              className="py-2 px-4 rounded-lg text-xs font-bold flex items-center gap-2
+                         bg-white/[0.04] hover:bg-white/[0.07] text-white/50 hover:text-white/80
+                         disabled:opacity-40 transition-all">
+              <Trash2 className="w-3.5 h-3.5" />
               {deleting ? "Eliminando..." : "Eliminar"}
             </button>
           </div>
@@ -378,12 +442,13 @@ function DetailDrawer({
   );
 }
 
-// ─── MAIN COMPONENT ──────────────────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
 export default function CampaignsView({ baseUrl, apiKey, onToast }: CampaignsViewProps) {
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"all" | "en_progreso" | "completada" | "cancelada" | "error">("all");
+  const [campaigns,  setCampaigns]  = useState<Campaign[]>([]);
+  const [loading,    setLoading]    = useState(false);
+  const [search,     setSearch]     = useState("");
+  const [filter,     setFilter]     = useState<"all"|"en_proceso"|"completada"|"completada_con_errores"|"cancelada"|"error">("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -392,143 +457,109 @@ export default function CampaignsView({ baseUrl, apiKey, onToast }: CampaignsVie
       const r = await fetch(`${baseUrl}/api/campaigns`, { headers: { "x-api-key": apiKey } });
       const d = await r.json();
       setCampaigns(d.datos?.campañas || []);
-    } catch {
-      onToast("Error cargando campañas", "error");
-    } finally {
-      setLoading(false);
-    }
+    } catch { onToast("Error cargando campañas", "error"); }
+    finally { setLoading(false); }
   }, [baseUrl]);
 
   useEffect(() => { load(); }, [load]);
 
   const filtered = campaigns.filter(c => {
-    const matchFilter = filter === "all" || c.estado === filter;
-    const matchSearch = c.nombre.toLowerCase().includes(search.toLowerCase());
-    return matchFilter && matchSearch;
+    const estadoMatch = filter === "all" || c.estado === filter;
+    const searchMatch = c.nombre.toLowerCase().includes(search.toLowerCase());
+    return estadoMatch && searchMatch;
   });
 
-  // Summary stats
-  const total = campaigns.length;
+  const total      = campaigns.length;
   const completadas = campaigns.filter(c => c.estado === "completada").length;
-  const activas = campaigns.filter(c => c.estado === "en_progreso").length;
-  const totalMsgs = campaigns.reduce((a, c) => a + c.total_mensajes, 0);
-  const totalSent = campaigns.reduce((a, c) => a + c.enviados, 0);
+  const activas    = campaigns.filter(c => c.estado === "en_proceso").length;
+  const totalSent  = campaigns.reduce((a, c) => a + c.enviados, 0);
+  const totalMsgs  = campaigns.reduce((a, c) => a + c.total_mensajes, 0);
 
   return (
-    <>
-      <style>{`
-        .cview-scroll::-webkit-scrollbar { width: 4px; }
-        .cview-scroll::-webkit-scrollbar-track { background: transparent; }
-        .cview-scroll::-webkit-scrollbar-thumb { background: #ffffff10; border-radius: 4px; }
-      `}</style>
+    <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      {/* Summary chips */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        {[
+          { l: "Campañas",      v: total,                      c: "text-white" },
+          { l: "Activas",       v: activas,                    c: "text-[#60a5fa]" },
+          { l: "Completadas",   v: completadas,                c: "text-[#4ade80]" },
+          { l: "Msgs enviados", v: totalSent.toLocaleString(), c: "text-[#4ade80]" },
+          { l: "Msgs totales",  v: totalMsgs.toLocaleString(), c: "text-white/50" },
+        ].map(({ l, v, c }) => (
+          <div key={l} className="bg-[#040704] rounded-xl px-3 py-2.5">
+            <p className="text-[8px] font-bold uppercase tracking-widest text-white/40 mb-0.5">{l}</p>
+            <p className={`text-lg font-black leading-none ${c}`}>{v}</p>
+          </div>
+        ))}
+      </div>
 
-        {/* ── SUMMARY STRIP ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12 }}>
-          {[
-            { l: "Campañas", v: total, c: "#e6edf3" },
-            { l: "Activas", v: activas, c: "#58a6ff" },
-            { l: "Completadas", v: completadas, c: "#25D366" },
-            { l: "Mensajes enviados", v: totalSent.toLocaleString(), c: "#25D366" },
-            { l: "Mensajes totales", v: totalMsgs.toLocaleString(), c: "#8b949e" },
-          ].map(({ l, v, c }) => (
-            <div key={l} style={{ background: "#111", border: "1px solid #ffffff08", borderRadius: 12, padding: "14px 16px" }}>
-              <div style={{ fontSize: 9, color: "#444", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{l}</div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: c }}>{v}</div>
-            </div>
-          ))}
-        </div>
+      {/* Chart */}
+      {campaigns.length > 0 && <Last5DaysChart campaigns={campaigns} />}
 
-        {/* ── TOOLBAR ── */}
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          {/* Filter pills */}
-          <div style={{ display: "flex", gap: 4, background: "#111", border: "1px solid #ffffff08", borderRadius: 10, padding: 4 }}>
-            {([
-              ["all", "Todas"],
-              ["en_progreso", "Activas"],
-              ["completada", "Completadas"],
-              ["cancelada", "Canceladas"],
-              ["error", "Error"],
-            ] as const).map(([f, label]) => (
+      {/* Toolbar */}
+      <div className="flex gap-2 items-center flex-wrap">
+        <div className="flex gap-0.5 bg-[#040704] rounded-lg p-1">
+          {([["all","Todas"],["en_proceso","Activas"],["completada","Completadas"],["completada_con_errores","Con errores"],["cancelada","Canceladas"],["error","Error"]] as const)
+            .map(([f, label]) => (
               <button key={f} onClick={() => setFilter(f)}
-                style={{
-                  background: filter === f ? "#ffffff12" : "none",
-                  border: "none", color: filter === f ? "#e6edf3" : "#555",
-                  padding: "6px 14px", borderRadius: 7, cursor: "pointer",
-                  fontSize: 11, fontWeight: 700, fontFamily: "inherit", transition: "all 0.15s",
-                }}>
+                className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition-all
+                  ${filter === f ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"}`}>
                 {label}
               </button>
             ))}
-          </div>
-
-          {/* Search */}
-          <div style={{ flex: 1, minWidth: 160, position: "relative" }}>
-            <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#444" }} />
-            <input value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar campaña..."
-              style={{
-                width: "100%", background: "#111", border: "1px solid #ffffff08", borderRadius: 9,
-                padding: "8px 10px 8px 30px", color: "#e6edf3", fontSize: 13, fontFamily: "inherit", outline: "none",
-              }} />
-          </div>
-
-          {/* Refresh */}
-          <button onClick={load}
-            style={{
-              background: "#111", border: "1px solid #ffffff08", color: "#555",
-              padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontFamily: "inherit",
-              display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600,
-            }}>
-            <RefreshCw size={13} style={{ animation: loading ? "spin 0.8s linear infinite" : "none" }} />
-            Actualizar
-          </button>
         </div>
 
-        {/* ── GRID ── */}
-        {loading && campaigns.length === 0 ? (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 14 }}>
-            {[1, 2, 3].map(i => (
-              <div key={i} style={{ background: "#111", border: "1px solid #ffffff08", borderRadius: 14, padding: 20, height: 180 }}>
-                {[60, 40, 80, 40].map((w, j) => (
-                  <div key={j} style={{ height: 12, width: `${w}%`, background: "#ffffff06", borderRadius: 6, marginBottom: 10 }} />
-                ))}
-              </div>
-            ))}
-          </div>
-        ) : filtered.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "60px 0", color: "#333" }}>
-            <BarChart3 size={40} style={{ margin: "0 auto 12px", opacity: 0.2 }} />
-            <div style={{ fontSize: 14 }}>No se encontraron campañas</div>
-          </div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 14 }}>
-            <AnimatePresence>
-              {filtered.map(c => (
-                <CampaignCard key={c.id} c={c} onClick={() => setSelectedId(c.id)} />
-              ))}
-            </AnimatePresence>
-          </div>
-        )}
+        <div className="flex-1 min-w-36 relative">
+          <Search className="w-3 h-3 absolute left-2.5 top-1/2 -translate-y-1/2 text-white/25" />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar campaña..."
+            className="w-full bg-[#040704] rounded-lg py-2 pl-7 pr-3 text-xs text-white
+                       focus:outline-none placeholder:text-white/20" />
+        </div>
+
+        <button onClick={load}
+          className="flex items-center gap-1.5 bg-[#040704] text-white/40 hover:text-white/70
+                     px-3 py-2 rounded-lg text-xs font-bold transition-all">
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+          Actualizar
+        </button>
       </div>
 
-      {/* ── DRAWER ── */}
+      {/* Grid */}
+      {loading && campaigns.length === 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {[1,2,3].map(i => (
+            <div key={i} className="bg-[#040704] rounded-xl p-3 h-40 space-y-2.5">
+              {[60,40,80,40].map((w,j) => (
+                <div key={j} className="h-2.5 bg-white/[0.04] rounded animate-pulse" style={{ width: `${w}%` }} />
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="py-16 flex flex-col items-center gap-3">
+          <BarChart3 className="w-10 h-10 text-white/10" />
+          <p className="text-xs text-white/25">No se encontraron campañas</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          <AnimatePresence>
+            {filtered.map(c => (
+              <CampaignCard key={c.id} c={c} onClick={() => setSelectedId(c.id)} />
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
+
+      {/* Drawer */}
       <AnimatePresence>
         {selectedId && (
-          <DetailDrawer
-            key={selectedId}
-            campaignId={selectedId}
-            baseUrl={baseUrl}
-            apiKey={apiKey}
-            onClose={() => setSelectedId(null)}
-            onToast={onToast}
-            onDeleted={() => { setSelectedId(null); load(); }}
-          />
+          <DetailDrawer key={selectedId} campaignId={selectedId} baseUrl={baseUrl} apiKey={apiKey}
+            onClose={() => setSelectedId(null)} onToast={onToast}
+            onDeleted={() => { setSelectedId(null); load(); }} />
         )}
       </AnimatePresence>
-
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </>
+    </div>
   );
 }

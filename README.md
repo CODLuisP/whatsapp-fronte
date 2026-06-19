@@ -1,4 +1,4 @@
-# WA BULK — Frontend
+# AeroSend — Frontend
 
 App React + TypeScript para envío masivo de WhatsApp.
 

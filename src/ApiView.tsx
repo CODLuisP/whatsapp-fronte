@@ -2,11 +2,7 @@ import { useState } from "react";
 import { Terminal, Copy, CheckCircle2, Server, Key, User, BookOpen } from "lucide-react";
 import { motion } from "motion/react";
 
-interface ApiViewProps {
-  apiKey: string;
-  userName: string;
-  baseUrl: string;
-}
+interface ApiViewProps { apiKey: string; userName: string; baseUrl: string; }
 
 export default function ApiView({ apiKey, userName, baseUrl }: ApiViewProps) {
   const [copied, setCopied] = useState<string | null>(null);
@@ -19,283 +15,150 @@ export default function ApiView({ apiKey, userName, baseUrl }: ApiViewProps) {
 
   const codeExamples = [
     {
-      id: "send-text",
-      title: "Enviar mensaje de texto",
-      method: "POST",
+      id: "send-text", title: "Enviar mensaje de texto", method: "POST",
       endpoint: "/api/send/single",
-      description: "Envía un mensaje de texto simple a un número de WhatsApp. El número debe incluir el código de país sin el símbolo +.",
+      description: "Envía un mensaje de texto simple. El número debe incluir código de país sin el símbolo +.",
       steps: null,
-      body: `{
-  "phone": "51987654321",
-  "type": "texto",
-  "text": "Hola, este es un mensaje de prueba desde la API."
-}`,
-      curl: `curl -X POST ${baseUrl}/api/send/single \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: ${apiKey}" \\
-  -d '{
-    "phone": "51987654321",
-    "type": "texto",
-    "text": "Hola, este es un mensaje de prueba desde la API."
-  }'`,
+      body: `{\n  "phone": "51987654321",\n  "type": "texto",\n  "text": "Hola, este es un mensaje de prueba."\n}`,
+      curl: `curl -X POST ${baseUrl}/api/send/single \\\n  -H "Content-Type: application/json" \\\n  -H "x-api-key: ${apiKey}" \\\n  -d '{"phone":"51987654321","type":"texto","text":"Hola!"}'`,
     },
     {
-      id: "send-image",
-      title: "Enviar imagen",
-      method: "POST",
+      id: "send-image", title: "Enviar imagen", method: "POST",
       endpoint: "/api/upload  →  /api/send/single",
-      description:
-        "Requiere dos pasos: primero sube la imagen con /api/upload (multipart/form-data, clave file), luego usa la URL devuelta para enviarla.",
-      steps: [
-        "Sube el archivo con POST /api/upload usando form-data (clave: file). Guarda la url de la respuesta.",
-        "Envía el mensaje con la URL obtenida:",
-      ],
-      body: `{
-  "phone": "51987654321",
-  "type": "imagen",
-  "file_url": "http://tu-servidor/uploads/imagen.jpg",
-  "text": "Caption opcional de la imagen"
-}`,
-      curl: `# Paso 1 — subir imagen
-curl -X POST ${baseUrl}/api/upload \\
-  -H "x-api-key: ${apiKey}" \\
-  -F "file=@/ruta/a/tu/imagen.jpg"
-
-# Paso 2 — enviar imagen
-curl -X POST ${baseUrl}/api/send/single \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: ${apiKey}" \\
-  -d '{
-    "phone": "51987654321",
-    "type": "imagen",
-    "file_url": "http://tu-servidor/uploads/imagen.jpg",
-    "text": "Caption opcional de la imagen"
-  }'`,
+      description: "Dos pasos: sube la imagen con /api/upload (multipart/form-data, clave file), luego envía con la URL devuelta.",
+      steps: ["Sube el archivo con POST /api/upload usando form-data (clave: file). Guarda la url.", "Envía el mensaje con la URL obtenida:"],
+      body: `{\n  "phone": "51987654321",\n  "type": "imagen",\n  "file_url": "http://tu-servidor/uploads/imagen.jpg",\n  "text": "Caption opcional"\n}`,
+      curl: `# Paso 1 — subir imagen\ncurl -X POST ${baseUrl}/api/upload \\\n  -H "x-api-key: ${apiKey}" \\\n  -F "file=@/ruta/imagen.jpg"\n\n# Paso 2 — enviar imagen\ncurl -X POST ${baseUrl}/api/send/single \\\n  -H "Content-Type: application/json" \\\n  -H "x-api-key: ${apiKey}" \\\n  -d '{"phone":"51987654321","type":"imagen","file_url":"http://tu-servidor/uploads/imagen.jpg"}'`,
     },
     {
-      id: "send-document",
-      title: "Enviar documento (PDF, Word, Excel…)",
-      method: "POST",
+      id: "send-document", title: "Enviar documento", method: "POST",
       endpoint: "/api/upload  →  /api/send/single",
-      description:
-        "Igual que imagen pero con type: documento. Incluye filename y mime_type para que WhatsApp muestre el nombre y el ícono correcto del archivo.",
-      steps: [
-        "Sube el archivo con POST /api/upload usando form-data (clave: file). Guarda la url de la respuesta.",
-        "Envía el mensaje con la URL obtenida, el nombre del archivo y su MIME type:",
-      ],
-      body: `{
-  "phone": "51987654321",
-  "type": "documento",
-  "file_url": "http://tu-servidor/uploads/factura.pdf",
-  "filename": "Factura_F001-00234.pdf",
-  "mime_type": "application/pdf",
-  "text": "Adjuntamos tu factura del mes de abril"
-}`,
-      curl: `# Paso 1 — subir documento
-curl -X POST ${baseUrl}/api/upload \\
-  -H "x-api-key: ${apiKey}" \\
-  -F "file=@/ruta/a/tu/factura.pdf"
-
-# Paso 2 — enviar documento
-curl -X POST ${baseUrl}/api/send/single \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: ${apiKey}" \\
-  -d '{
-    "phone": "51987654321",
-    "type": "documento",
-    "file_url": "http://tu-servidor/uploads/factura.pdf",
-    "filename": "Factura_F001-00234.pdf",
-    "mime_type": "application/pdf",
-    "text": "Adjuntamos tu factura del mes de abril"
-  }'`,
+      description: "Igual que imagen pero con type: documento. Incluye filename y mime_type para que WhatsApp muestre el nombre correcto.",
+      steps: ["Sube el archivo con POST /api/upload usando form-data (clave: file).", "Envía el mensaje con la URL, nombre y MIME type:"],
+      body: `{\n  "phone": "51987654321",\n  "type": "documento",\n  "file_url": "http://tu-servidor/uploads/factura.pdf",\n  "filename": "Factura_001.pdf",\n  "mime_type": "application/pdf",\n  "text": "Adjuntamos tu factura"\n}`,
+      curl: `# Paso 1 — subir documento\ncurl -X POST ${baseUrl}/api/upload \\\n  -H "x-api-key: ${apiKey}" \\\n  -F "file=@/ruta/factura.pdf"\n\n# Paso 2 — enviar documento\ncurl -X POST ${baseUrl}/api/send/single \\\n  -H "Content-Type: application/json" \\\n  -H "x-api-key: ${apiKey}" \\\n  -d '{"phone":"51987654321","type":"documento","file_url":"...","filename":"Factura_001.pdf","mime_type":"application/pdf"}'`,
     },
     {
-      id: "check-status",
-      title: "Verificar estado de conexión",
-      method: "GET",
+      id: "check-status", title: "Verificar estado de conexión", method: "GET",
       endpoint: "/api/status",
-      description:
-        "Obtiene el estado actual de la sesión de WhatsApp vinculada al API Key. No requiere body.",
-      steps: null,
-      body: "",
-      curl: `curl -X GET ${baseUrl}/api/status \\
-  -H "x-api-key: ${apiKey}"`,
+      description: "Obtiene el estado actual de la sesión de WhatsApp vinculada al API Key. No requiere body.",
+      steps: null, body: "",
+      curl: `curl -X GET ${baseUrl}/api/status \\\n  -H "x-api-key: ${apiKey}"`,
     },
   ];
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8 pb-12">
+    <div className="max-w-5xl mx-auto space-y-3 pb-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
       {/* Credenciales */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-[#111111] border border-white/5 p-6 rounded-3xl relative overflow-hidden"
-        >
-          <div className="absolute top-0 right-0 w-64 h-64 bg-green-500/10 rounded-full blur-[80px] -mr-32 -mt-32" />
-          <div className="relative z-10">
-            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <User className="text-[#25D366] w-6 h-6" />
-              Credenciales de usuario
-            </h2>
-            <div className="bg-black/50 border border-white/5 rounded-xl p-4">
-              <p className="text-xs text-gray-500 mb-1 font-bold uppercase tracking-wider">
-                Nombre de usuario
-              </p>
-              <p className="text-white font-medium">{userName}</p>
-            </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+          className="bg-[#040704] rounded-xl p-4">
+          <p className="text-[8px] font-bold uppercase tracking-widest text-white/75 mb-3">Credenciales</p>
+          <div className="flex items-center gap-2.5 mb-2">
+            <User className="w-3.5 h-3.5 text-white/60" />
+            <span className="text-[8px] font-bold uppercase tracking-wider text-white/75">Usuario</span>
+          </div>
+          <div className="bg-white/[0.04] rounded-lg px-3 py-2">
+            <p className="text-sm font-bold text-white">{userName}</p>
           </div>
         </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="bg-[#111111] border border-white/5 p-6 rounded-3xl relative overflow-hidden"
-        >
-          <div className="absolute top-0 right-0 w-64 h-64 bg-green-500/10 rounded-full blur-[80px] -mr-32 -mt-32" />
-          <div className="relative z-10">
-            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <Key className="text-[#25D366] w-6 h-6" />
-              Tu API Key (x-api-key)
-            </h2>
-            <div className="bg-black/50 border border-white/5 rounded-xl p-4 flex items-center justify-between group">
-              <div className="min-w-0">
-                <p className="text-xs text-gray-500 mb-1 font-bold uppercase tracking-wider">
-                  Token de autenticación
-                </p>
-                <p className="text-green-400 font-mono text-sm break-all">{apiKey}</p>
-              </div>
-              <button
-                onClick={() => handleCopy(apiKey, "apikey")}
-                className="p-2 hover:bg-white/10 rounded-lg transition-colors shrink-0 ml-4"
-                title="Copiar API Key"
-              >
-                {copied === "apikey" ? (
-                  <CheckCircle2 className="w-5 h-5 text-green-500" />
-                ) : (
-                  <Copy className="w-5 h-5 text-gray-400 group-hover:text-white" />
-                )}
-              </button>
-            </div>
-            <p className="text-xs text-red-400/80 mt-3">
-              Mantén esta clave en secreto. Da acceso a enviar mensajes en tu nombre.
-            </p>
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
+          className="bg-[#040704] rounded-xl p-4">
+          <p className="text-[8px] font-bold uppercase tracking-widest text-white/75 mb-3">API Key</p>
+          <div className="flex items-center gap-2.5 mb-2">
+            <Key className="w-3.5 h-3.5 text-white/60" />
+            <span className="text-[8px] font-bold uppercase tracking-wider text-white/75">x-api-key header</span>
           </div>
+          <div className="bg-white/[0.04] rounded-lg px-3 py-2 flex items-center justify-between gap-2">
+            <p className="text-xs font-mono text-[#4ade80] truncate">{apiKey}</p>
+            <button onClick={() => handleCopy(apiKey, "apikey")}
+              className="shrink-0 p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors">
+              {copied === "apikey"
+                ? <CheckCircle2 className="w-3.5 h-3.5 text-[#4ade80]" />
+                : <Copy className="w-3.5 h-3.5 text-white/60 hover:text-white/60" />}
+            </button>
+          </div>
+          <p className="text-[9px] text-red-400/60 mt-2">Mantén esta clave en secreto.</p>
         </motion.div>
       </div>
 
       {/* Documentación */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-        className="bg-[#111111] border border-white/5 rounded-3xl p-6 md:p-8"
-      >
-        <div className="mb-8 border-b border-white/5 pb-6">
-          <h2 className="text-2xl font-black mb-2 flex items-center gap-3">
-            <BookOpen className="text-[#25D366] w-8 h-8" />
-            Documentación de referencia
-          </h2>
-          <p className="text-gray-400 text-sm leading-relaxed">
-            Usa estos endpoints para integrar WhatsApp en tus sistemas. Todas las
-            peticiones requieren el header{" "}
-            <code className="text-green-400 bg-green-400/10 px-1 py-0.5 rounded text-xs">
-              x-api-key
-            </code>
-            .
-          </p>
-          <div className="mt-4 p-4 bg-black/40 rounded-xl border border-white/5 flex items-center gap-3">
-            <Server className="text-gray-500 w-5 h-5 shrink-0" />
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+        className="bg-[#040704] rounded-xl overflow-hidden">
+
+        {/* Header docs */}
+        <div className="px-4 py-3 border-b border-white/[0.05]">
+          <div className="flex items-center gap-2 mb-1">
+            <BookOpen className="w-3.5 h-3.5 text-[#4ade80]" />
+            <p className="text-[8px] font-bold uppercase tracking-widest text-white/75">Referencia</p>
+          </div>
+          <h3 className="text-sm font-black text-white mb-2">Documentación de API</h3>
+          <div className="flex items-center gap-2.5 bg-white/[0.04] rounded-lg px-3 py-2">
+            <Server className="w-3.5 h-3.5 text-white/60 shrink-0" />
             <div>
-              <span className="text-xs text-gray-500 font-bold uppercase tracking-wider block">
-                URL base
-              </span>
-              <span className="text-white font-mono text-sm">{baseUrl}</span>
+              <span className="text-[8px] text-white/60 uppercase tracking-wider block">URL Base</span>
+              <span className="text-xs font-mono text-white/70">{baseUrl}</span>
             </div>
           </div>
         </div>
 
-        <div className="space-y-8">
+        {/* Endpoints */}
+        <div className="p-4 space-y-3">
           {codeExamples.map((ex, idx) => (
-            <motion.div
-              key={ex.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 + idx * 0.08 }}
-              className="bg-black/30 border border-white/5 rounded-2xl overflow-hidden"
-            >
-              {/* Header del endpoint */}
-              <div className="p-5 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 bg-black/50">
-                <div className="flex items-center gap-3 flex-wrap">
-                  <span
-                    className={`px-3 py-1 rounded-lg text-xs font-bold ${
-                      ex.method === "POST"
-                        ? "bg-blue-500/20 text-blue-400"
-                        : "bg-green-500/20 text-green-400"
-                    }`}
-                  >
-                    {ex.method}
-                  </span>
-                  <span className="font-mono text-white text-sm">{ex.endpoint}</span>
-                </div>
-                <h3 className="text-white font-semibold text-sm hidden md:block">
-                  {ex.title}
-                </h3>
+            <motion.div key={ex.id}
+              initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15 + idx * 0.06 }}
+              className="bg-white/[0.02] rounded-xl overflow-hidden">
+
+              {/* Endpoint header */}
+              <div className="px-3 py-2.5 border-b border-white/[0.04] flex flex-wrap items-center gap-2.5 bg-black/20">
+                <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase
+                  ${ex.method === "POST" ? "bg-blue-500/15 text-blue-400" : "bg-[#4ade80]/15 text-[#4ade80]"}`}>
+                  {ex.method}
+                </span>
+                <span className="font-mono text-xs text-white/70">{ex.endpoint}</span>
+                <span className="text-[10px] text-white/60 ml-auto hidden sm:block">{ex.title}</span>
               </div>
 
-              <div className="p-5 md:p-6 space-y-5">
-                <p className="text-gray-400 text-sm leading-relaxed">{ex.description}</p>
+              <div className="p-3 space-y-3">
+                <p className="text-[11px] text-white/75 leading-relaxed">{ex.description}</p>
 
-                {/* Pasos numerados (solo para imagen y documento) */}
                 {ex.steps && (
-                  <ol className="space-y-2">
+                  <ol className="space-y-1.5">
                     {ex.steps.map((step, i) => (
-                      <li key={i} className="flex items-start gap-3">
-                        <span className="mt-0.5 w-5 h-5 rounded-full bg-[#25D366]/15 text-[#25D366] text-[11px] font-bold flex items-center justify-center shrink-0">
-                          {i + 1}
-                        </span>
-                        <span className="text-sm text-gray-300 leading-relaxed">{step}</span>
+                      <li key={i} className="flex items-start gap-2">
+                        <span className="mt-0.5 w-4 h-4 rounded-full bg-[#4ade80]/10 text-[#4ade80] text-[9px] font-black flex items-center justify-center shrink-0">{i+1}</span>
+                        <span className="text-[11px] text-white/75 leading-relaxed">{step}</span>
                       </li>
                     ))}
                   </ol>
                 )}
 
-                {/* JSON Body */}
                 {ex.body && (
                   <div>
-                    <p className="text-[10px] text-gray-500 mb-2 font-bold uppercase tracking-widest">
-                      JSON body
-                    </p>
-                    <pre className="bg-[#0a0a0a] border border-white/5 p-4 rounded-xl text-sm font-mono text-gray-300 overflow-x-auto">
+                    <p className="text-[8px] text-white/60 uppercase tracking-widest font-bold mb-1.5">JSON body</p>
+                    <pre className="bg-black/30 rounded-lg p-3 text-[11px] font-mono text-white/60 overflow-x-auto">
                       <code>{ex.body}</code>
                     </pre>
                   </div>
                 )}
 
-                {/* cURL */}
                 <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest flex items-center gap-2">
-                      <Terminal className="w-3.5 h-3.5" /> cURL
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-[8px] text-white/60 uppercase tracking-widest font-bold flex items-center gap-1.5">
+                      <Terminal className="w-3 h-3" /> cURL
                     </p>
-                    <button
-                      onClick={() => handleCopy(ex.curl, ex.id)}
-                      className="text-xs flex items-center gap-1 text-gray-400 hover:text-white transition-colors py-1 px-2 rounded-lg hover:bg-white/5"
-                    >
-                      {copied === ex.id ? (
-                        <>
-                          <CheckCircle2 className="w-3 h-3 text-green-500" /> Copiado
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3 h-3" /> Copiar
-                        </>
-                      )}
+                    <button onClick={() => handleCopy(ex.curl, ex.id)}
+                      className="text-[9px] flex items-center gap-1 text-white/60 hover:text-white/60 transition-colors
+                                 py-0.5 px-2 rounded hover:bg-white/[0.04]">
+                      {copied === ex.id
+                        ? <><CheckCircle2 className="w-3 h-3 text-[#4ade80]" /> Copiado</>
+                        : <><Copy className="w-3 h-3" /> Copiar</>}
                     </button>
                   </div>
-                  <pre className="bg-[#0a0a0a] border border-white/5 px-4 py-4 rounded-xl text-sm font-mono text-green-400/80 overflow-x-auto leading-relaxed">
+                  <pre className="bg-black/30 rounded-lg p-3 text-[11px] font-mono text-[#4ade80]/70 overflow-x-auto leading-relaxed">
                     <code>{ex.curl}</code>
                   </pre>
                 </div>

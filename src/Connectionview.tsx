@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
-import { motion } from "motion/react";
-import { CheckCircle2, LogOut, RefreshCw, Terminal, Users, MessageSquare } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import {
+  CheckCircle2, LogOut, RefreshCw, Terminal,
+  Users, MessageSquare, Wifi, WifiOff, Clock,
+  TrendingUp, Send, XCircle,
+} from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+} from "recharts";
+import logoWtsp from "./assets/logowtsp.png";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -20,6 +28,22 @@ interface LogEntry {
   type: "info" | "success" | "error" | "warning";
 }
 
+interface ReportSummary {
+  mensajes: {
+    total: number; enviados: number; fallidos: number; pendientes: number;
+    tasa_exito: number;
+    por_tipo: { texto: number; imagen: number; documento: number };
+  };
+  campanas: {
+    total: number; completadas: number; con_errores: number;
+    canceladas: number; en_proceso: number;
+  };
+}
+
+interface DailyPoint {
+  fecha: string; total: number; enviados: number; fallidos: number;
+}
+
 interface ConnectionViewProps {
   apiUrl: string;
   apiKey: string;
@@ -36,11 +60,15 @@ const LABELS: Record<EstadoWA, string> = {
 };
 const DOT_COLOR: Record<EstadoWA, string> = {
   desconectado: "bg-red-500", conectando: "bg-yellow-400", qr: "bg-blue-400",
-  conectado: "bg-[#25D366]", reconectando: "bg-yellow-400", error: "bg-red-600",
+  conectado: "bg-[#4ade80]", reconectando: "bg-yellow-400", error: "bg-red-600",
 };
 const TEXT_COLOR: Record<EstadoWA, string> = {
-  desconectado: "text-red-500", conectando: "text-yellow-400", qr: "text-blue-400",
-  conectado: "text-[#25D366]", reconectando: "text-yellow-400", error: "text-red-500",
+  desconectado: "text-red-400", conectando: "text-yellow-400", qr: "text-blue-400",
+  conectado: "text-[#4ade80]", reconectando: "text-yellow-400", error: "text-red-400",
+};
+const LOG_ICON: Record<LogEntry["type"], string> = {
+  success: "text-[#4ade80]", error: "text-red-400",
+  warning: "text-yellow-400", info: "text-blue-400",
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -50,24 +78,6 @@ const getNow = () => new Date().toLocaleTimeString("es-PE", { hour12: false });
 const makeLog = (message: string, type: LogEntry["type"] = "info"): LogEntry =>
   ({ id: `${Date.now()}-${Math.random()}`, timestamp: getNow(), message, type });
 const toSrc = (qr: string) => qr.startsWith("data:") ? qr : `data:image/png;base64,${qr}`;
-
-// ─── StatCard ─────────────────────────────────────────────────────────────────
-
-function StatCard({ title, value, icon: Icon, accent }: {
-  title: string; value: string; icon: React.ElementType; accent: string;
-}) {
-  return (
-    <div className="bg-[#1a1a1a] border border-white/5 p-3 rounded-xl flex items-center gap-3 hover:border-white/10 transition-colors">
-      <div className={`p-2 rounded-lg ${accent}/10`}>
-        <Icon className={`w-4 h-4 ${accent.replace("bg-", "text-")}`} />
-      </div>
-      <div className="min-w-0">
-        <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider">{title}</p>
-        <p className="text-base font-bold text-white mt-0.5 truncate">{value}</p>
-      </div>
-    </div>
-  );
-}
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
@@ -79,6 +89,7 @@ export default function ConnectionView({ apiUrl, apiKey, userName, socket, onSta
   const [socketOk,        setSocketOk]        = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [logs,            setLogs]            = useState<LogEntry[]>([]);
+  const [lastUpdate,      setLastUpdate]      = useState<string>(getNow());
 
   const waStatusRef    = useRef<WAStatus>({ estado: "desconectado" });
   const qrPhaseRef     = useRef<null | "waiting" | "qr" | "connected">(null);
@@ -87,13 +98,32 @@ export default function ConnectionView({ apiUrl, apiKey, userName, socket, onSta
   const qrRetryRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const slowPollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
   const fastPollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
-  // ref que apunta siempre a la última versión de loadStatus — rompe el ciclo fetchQR ↔ loadStatus
   const loadStatusRef  = useRef<() => Promise<EstadoWA>>(() => Promise.resolve("desconectado" as EstadoWA));
+  const logEndRef      = useRef<HTMLDivElement | null>(null);
+
+  const [summary,        setSummary]        = useState<ReportSummary | null>(null);
+  const [dailyData,      setDailyData]      = useState<DailyPoint[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+
+  const loadReports = useCallback(async () => {
+    setReportsLoading(true);
+    try {
+      const [sumRes, dayRes] = await Promise.all([
+        axios.get(`${apiUrl}/reports/summary`, { headers: authHeaders.current }),
+        axios.get(`${apiUrl}/reports/daily?dias=7`, { headers: authHeaders.current }),
+      ]);
+      setSummary(sumRes.data.datos);
+      setDailyData(dayRes.data.datos?.por_dia ?? []);
+    } catch { /* silent */ }
+    finally { setReportsLoading(false); }
+  }, [apiUrl]);
+
+  useEffect(() => { loadReports(); }, [loadReports]);
 
   useEffect(() => { waStatusRef.current = waStatus; }, [waStatus]);
   useEffect(() => { qrPhaseRef.current = qrPhase; }, [qrPhase]);
+  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs]);
 
-  // ── helpers de polling ────────────────────────────────────────────────────
   const stopFastPoll = useCallback(() => {
     if (fastPollRef.current) { clearInterval(fastPollRef.current); fastPollRef.current = null; }
   }, []);
@@ -104,20 +134,17 @@ export default function ConnectionView({ apiUrl, apiKey, userName, socket, onSta
   }, [stopFastPoll]);
 
   const authHeaders = useRef<Record<string, string>>({});
-  useEffect(() => {
-    authHeaders.current = apiKey ? { "x-api-key": apiKey } : {};
-  }, [apiKey]);
+  useEffect(() => { authHeaders.current = apiKey ? { "x-api-key": apiKey } : {}; }, [apiKey]);
 
   const addLog = useCallback((message: string, type: LogEntry["type"] = "info") => {
     setLogs(prev => [...prev, makeLog(message, type)]);
+    setLastUpdate(getNow());
   }, []);
 
-  // ── applyStatus ───────────────────────────────────────────────────────────
   const applyStatus = useCallback((datos: WAStatus) => {
     setWaStatus(datos);
     onStatusChange?.(datos.estado, datos.usuario ?? null, datos.numero ?? null);
     if (datos.estado === "conectado") {
-      // cancelar retries y fast-poll al conectar
       if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; }
       stopFastPoll();
       setQrPhase("connected");
@@ -125,11 +152,9 @@ export default function ConnectionView({ apiUrl, apiKey, userName, socket, onSta
     }
   }, [onStatusChange, stopFastPoll]);
 
-  // ── fetchQR ───────────────────────────────────────────────────────────────
   const fetchQR = useCallback(async (forceEstado?: EstadoWA) => {
     const estadoActual = forceEstado ?? waStatusRef.current.estado;
     if (estadoActual === "conectado") return;
-
     setQrPhase("waiting");
     try {
       const { data } = await axios.get(`${apiUrl}/qr`, { headers: authHeaders.current });
@@ -137,7 +162,6 @@ export default function ConnectionView({ apiUrl, apiKey, userName, socket, onSta
       if (d?.qr) {
         setQrSrc(toSrc(d.qr));
         setQrPhase("qr");
-        // usar ref para evitar ciclo de dependencias con loadStatus
         startFastPoll(() => loadStatusRef.current());
       } else if (d?.estado === "conectado") {
         applyStatus({ estado: "conectado", usuario: d.usuario, numero: normalizeNumero(d.numero) });
@@ -156,34 +180,24 @@ export default function ConnectionView({ apiUrl, apiKey, userName, socket, onSta
     }
   }, [apiUrl, applyStatus, addLog, startFastPoll]);
 
-  // ── desconectar ───────────────────────────────────────────────────────────
   const desconectar = async () => {
     if (!confirm("¿Cerrar sesión de WhatsApp?")) return;
     setIsDisconnecting(true);
     try {
       await axios.post(`${apiUrl}/disconnect`, {}, { headers: authHeaders.current });
-
-      // FIX: forzar el estado ANTES de pedir el QR para que la guard no bloquee
       const estadoReset: WAStatus = { estado: "desconectado", usuario: null, numero: null };
       setWaStatus(estadoReset);
       waStatusRef.current = estadoReset;
       onStatusChange?.("desconectado", null, null);
-
       setQrSrc(null);
       setQrPhase("waiting");
       qrCountRef.current = 0;
       addLog("Sesión cerrada — buscando QR...", "warning");
-
-      // FIX: pasar forceEstado para saltarse la guard
       fetchQR("desconectado");
-
     } catch (err: any) {
       const status = err?.response?.status;
-      if (status === 401 || status === 403) {
-        addLog("API Key inválida — no se pudo cerrar sesión", "error");
-      } else {
-        addLog("Error al cerrar sesión", "error");
-      }
+      if (status === 401 || status === 403) addLog("API Key inválida — no se pudo cerrar sesión", "error");
+      else addLog("Error al cerrar sesión", "error");
     } finally {
       setIsDisconnecting(false);
     }
@@ -195,89 +209,54 @@ export default function ConnectionView({ apiUrl, apiKey, userName, socket, onSta
       const raw: WAStatus = data.datos ?? data;
       const normalizado = { ...raw, numero: normalizeNumero(raw.numero) };
       applyStatus(normalizado);
-
       if (raw.estado === "conectado") {
-        // solo loguear la primera vez que detectamos conexión (qrPhase no era "connected" aún)
-        if (qrPhaseRef.current !== "connected") {
-          addLog(`WhatsApp conectado${raw.usuario ? ` como ${raw.usuario}` : ""}`, "success");
-        }
+        if (qrPhaseRef.current !== "connected") addLog(`WhatsApp conectado${raw.usuario ? ` como ${raw.usuario}` : ""}`, "success");
         stopFastPoll();
         setQrPhase("connected");
         setQrSrc(null);
         if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; }
       }
-
       return raw.estado;
     } catch (err: any) {
       const status = err?.response?.status;
-      if (status === 401 || status === 403) {
-        addLog("API Key inválida o sin permisos (401/403)", "error");
-      } else {
-        addLog("Error al obtener estado", "error");
-      }
+      if (status === 401 || status === 403) addLog("API Key inválida o sin permisos (401/403)", "error");
+      else addLog("Error al obtener estado", "error");
       applyStatus({ estado: "error" });
       return "error";
     }
   }, [apiUrl, applyStatus, addLog, stopFastPoll]);
 
-  // mantener ref siempre actualizado (rompe ciclo con fetchQR)
   loadStatusRef.current = loadStatus;
 
-  // ── Socket.IO ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!socket) return;
-
     const onConn = () => { setSocketOk(true);  addLog("Socket.IO conectado", "success"); };
     const onDisc = () => { setSocketOk(false); addLog("Socket.IO desconectado", "warning"); };
-
-const onQR = ({ qr }: { qr: string }) => {
-  if (qrPhaseRef.current === "connected") return; // ← ignorar QR si ya está conectado
-  
-  qrCountRef.current += 1;
-  setQrSrc(toSrc(qr));
-  setQrPhase("qr");
-  const msg = qrCountRef.current === 1
-    ? "QR listo — escanea con WhatsApp"
-    : `🔄 QR renovado (${qrCountRef.current}) — vuelve a escanear`;
-  addLog(msg, "info");
-  startFastPoll(() => loadStatusRef.current());
-  if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; }
-};
-
-const onEstado = ({ estado, usuario, numero, mensaje }: WAStatus & { mensaje?: string }) => {
-  if (qrPhaseRef.current === "connected" && estado !== "desconectado" && estado !== "error") return; // ← ignorar si ya conectado
-  
-  applyStatus({ estado, usuario, numero: normalizeNumero(numero) });
-  if (estado === "conectado") {
-    stopFastPoll();
-    setQrPhase("connected");
-    setQrSrc(null);
-    if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; }
-  }
-  const fallback: Record<string, string> = {
-    reconectando: "Reconectando...",
-    conectando:   "Vinculando dispositivo...",
-    conectado:    usuario ? `Conectado como ${usuario}` : "WhatsApp conectado",
-    desconectado: "Desconectado",
-    error:        "Error de conexión",
-    qr:           "Generando QR...",
-  };
-  addLog(
-    mensaje || fallback[estado] || `Estado: ${estado}`,
-    estado === "conectado" ? "success" : "info"
-  );
-};
-
-    socket.on("connect",          onConn);
-    socket.on("disconnect",       onDisc);
-    socket.on("qr_actualizado",   onQR);
-    socket.on("estado_conexion",  onEstado);
+    const onQR = ({ qr }: { qr: string }) => {
+      if (qrPhaseRef.current === "connected") return;
+      qrCountRef.current += 1;
+      setQrSrc(toSrc(qr));
+      setQrPhase("qr");
+      addLog(qrCountRef.current === 1 ? "QR listo — escanea con WhatsApp" : `QR renovado (${qrCountRef.current}) — vuelve a escanear`, "info");
+      startFastPoll(() => loadStatusRef.current());
+      if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; }
+    };
+    const onEstado = ({ estado, usuario, numero, mensaje }: WAStatus & { mensaje?: string }) => {
+      if (qrPhaseRef.current === "connected" && estado !== "desconectado" && estado !== "error") return;
+      applyStatus({ estado, usuario, numero: normalizeNumero(numero) });
+      if (estado === "conectado") { stopFastPoll(); setQrPhase("connected"); setQrSrc(null); if (qrRetryRef.current) { clearTimeout(qrRetryRef.current); qrRetryRef.current = null; } }
+      const fallback: Record<string, string> = { reconectando: "Reconectando...", conectando: "Vinculando dispositivo...", conectado: usuario ? `Conectado como ${usuario}` : "WhatsApp conectado", desconectado: "Desconectado", error: "Error de conexión", qr: "Generando QR..." };
+      addLog(mensaje || fallback[estado] || `Estado: ${estado}`, estado === "conectado" ? "success" : "info");
+    };
+    socket.on("connect", onConn);
+    socket.on("disconnect", onDisc);
+    socket.on("qr_actualizado", onQR);
+    socket.on("estado_conexion", onEstado);
     if (socket.connected) setSocketOk(true);
-
     return () => {
-      socket.off("connect",         onConn);
-      socket.off("disconnect",      onDisc);
-      socket.off("qr_actualizado",  onQR);
+      socket.off("connect", onConn);
+      socket.off("disconnect", onDisc);
+      socket.off("qr_actualizado", onQR);
       socket.off("estado_conexion", onEstado);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -286,20 +265,11 @@ const onEstado = ({ estado, usuario, numero, mensaje }: WAStatus & { mensaje?: s
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
-
     loadStatusRef.current().then((estado) => {
-      if (estado === "conectado") {
-        addLog("WhatsApp conectado y listo", "success");
-      } else {
-        setQrPhase("waiting");
-        addLog("Buscando QR...", "info");
-        fetchQR(estado);
-      }
+      if (estado === "conectado") addLog("WhatsApp conectado y listo", "success");
+      else { setQrPhase("waiting"); addLog("Buscando QR...", "info"); fetchQR(estado); }
     });
-
-    // slow poll — siempre activo cada 5s
     slowPollRef.current = setInterval(() => loadStatusRef.current(), 5_000);
-
     return () => {
       if (slowPollRef.current) clearInterval(slowPollRef.current);
       stopFastPoll();
@@ -309,154 +279,406 @@ const onEstado = ({ estado, usuario, numero, mensaje }: WAStatus & { mensaje?: s
   }, []);
 
   // ── Derivados ─────────────────────────────────────────────────────────────
-  const isConnected  = qrPhase === "connected";
-  // badge siempre refleja qrPhase — evita desfase cuando qrPhase ya es "connected" pero waStatus aún no llegó
-  const estadoBadge  = isConnected ? ("conectado" as EstadoWA) : waStatus.estado;
-  const showBadge    = qrPhase !== null;
+  const isConnected = qrPhase === "connected";
+  const estadoBadge = isConnected ? ("conectado" as EstadoWA) : waStatus.estado;
+  const showBadge   = qrPhase !== null;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
-      {/* Panel izquierdo */}
-      <div className="bg-[#111111] rounded-2xl p-6 flex flex-col items-center justify-center relative overflow-hidden min-h-105">
-        <div className="absolute top-0 left-0 w-full h-0.5 bg-linear-to-r from-transparent via-[#25D366] to-transparent opacity-30" />
 
-        {/* Conectado */}
-        {isConnected && (
-          <motion.div initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-            className="flex flex-col items-center gap-5">
-            <div className="relative">
-              <div className="absolute inset-0 bg-[#25D366] rounded-full" />
-              <div className="bg-[#25D366] p-5 rounded-full relative">
-                <CheckCircle2 className="w-20 h-20 text-white" />
+      {/* ── Grid principal ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-3">
+
+        {/* Panel QR / Conectado */}
+        <div className="relative bg-[#000000] border-0 rounded-2xl overflow-hidden flex flex-col items-center justify-center min-h-[260px]">
+          <div className="absolute inset-0 pointer-events-none">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 rounded-full"
+              style={{ background: isConnected
+                ? "radial-gradient(circle, rgba(74,222,128,0.05) 0%, transparent 70%)"
+                : "radial-gradient(circle, rgba(74,222,128,0.02) 0%, transparent 70%)" }} />
+          </div>
+
+          <AnimatePresence mode="wait">
+            {isConnected && (
+              <motion.div key="connected"
+                initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+                className="relative z-10 flex flex-col items-center gap-3 px-6 py-5 text-center">
+                <div className="relative">
+                  <div className="absolute inset-0 rounded-full blur-xl bg-[#4ade80]/[0.06] scale-150" />
+                  <div className="relative bg-[#4ade80]/10 border border-[#4ade80]/20 p-3 rounded-full">
+                    <img src={logoWtsp} alt="WhatsApp" className="w-10 h-10 object-contain" />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-base font-black text-white tracking-tight">WhatsApp Conectado</p>
+                  <p className="text-white/75 text-xs mt-0.5">
+                    Sesión activa como{" "}
+                    <span className="text-[#4ade80] font-semibold">{waStatus.usuario || userName || "usuario"}</span>
+                  </p>
+                  {waStatus.numero && (
+                    <p className="text-white/70 text-[10px] mt-0.5 font-mono">+{waStatus.numero}</p>
+                  )}
+                </div>
+                <button onClick={desconectar} disabled={isDisconnecting}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold
+                             bg-red-500/10 hover:bg-red-500/15 text-red-400 border border-red-500/15
+                             disabled:opacity-40 transition-all">
+                  {isDisconnecting ? <RefreshCw className="w-3 h-3 animate-spin" /> : <LogOut className="w-3 h-3" />}
+                  {isDisconnecting ? "Cerrando..." : "Cerrar Sesión"}
+                </button>
+              </motion.div>
+            )}
+
+            {/* ── QR listo ── */}
+            {!isConnected && qrPhase === "qr" && qrSrc && (
+              <motion.div key="qr"
+                initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+                className="relative z-10 flex flex-col items-center gap-3 px-4 py-4">
+                <div className="text-center">
+                  <p className="text-sm font-black text-white">Escanea el QR</p>
+                  <p className="text-white/70 text-[10px] mt-0.5">WhatsApp → Dispositivos vinculados → Vincular</p>
+                </div>
+                <div className="relative group cursor-pointer" onClick={() => fetchQR()}>
+                  <div className="absolute -inset-2 rounded-xl opacity-30"
+                    style={{ background: "radial-gradient(circle, rgba(74,222,128,0.3) 0%, transparent 70%)" }} />
+                  <div className="relative p-2 bg-white rounded-lg">
+                    <img src={qrSrc} alt="QR WhatsApp" className="w-40 h-40 block" />
+                  </div>
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg">
+                    <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-sm px-2.5 py-1.5 rounded-lg">
+                      <RefreshCw className="w-3.5 h-3.5 text-white" />
+                      <span className="text-white text-[11px] font-bold">Actualizar</span>
+                    </div>
+                  </div>
+                </div>
+                <button onClick={() => fetchQR()}
+                  className="text-[10px] font-bold uppercase tracking-wider text-white/70 hover:text-white/70
+                             px-3 py-1 rounded-lg border-0 hover:border-white/10 transition-all">
+                  ↻ Regenerar QR
+                </button>
+              </motion.div>
+            )}
+
+            {/* ── Esperando ── */}
+            {!isConnected && (qrPhase === "waiting" || qrPhase === null) && (
+              <motion.div key="waiting"
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                className="relative z-10 flex flex-col items-center gap-3 px-6 py-6">
+                <div className="w-36 h-36 rounded-xl border-0 bg-white/[0.02]
+                                flex flex-col items-center justify-center gap-2">
+                  <RefreshCw className="w-6 h-6 text-white/20 animate-spin" style={{ animationDuration: "2s" }} />
+                  <p className="text-[10px] text-white/20 text-center leading-relaxed px-3">
+                    {waStatus.estado === "conectando"   ? "Vinculando dispositivo..." :
+                     waStatus.estado === "reconectando" ? "Verificando vinculación..." :
+                     qrPhase === null                   ? "Iniciando..." : "Generando QR..."}
+                  </p>
+                </div>
+                {qrPhase !== null && (
+                  <button onClick={() => fetchQR("desconectado")}
+                    className="text-[10px] font-bold uppercase tracking-wider text-white/70 hover:text-white/70
+                               px-3 py-1 rounded-lg border-0 hover:border-white/10 transition-all">
+                    ↻ Forzar QR
+                  </button>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Panel lateral */}
+        <div className="flex flex-col gap-3">
+
+          {/* Tarjeta sesión */}
+          <div className="relative bg-[#000000] border-0 rounded-xl p-3 space-y-2 overflow-hidden">
+            <p className="text-[8px] font-bold uppercase tracking-widest text-gray-200">Sesión</p>
+            <div className="space-y-1.5">
+              <div className="bg-[#25D366]/[0.03] border-0 rounded-lg p-2.5 flex items-center gap-2.5">
+                <Users className="w-3.5 h-3.5 text-white/70 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-[8px] text-white/70 uppercase tracking-wider">Usuario</p>
+                  <p className="text-xs font-bold text-white truncate">{userName || "—"}</p>
+                </div>
               </div>
-            </div>
-            <div className="text-center">
-              <p className="text-lg font-bold text-white">WhatsApp Conectado</p>
-              <p className="text-gray-400 mt-1 text-xs">
-                Como <span className="text-white font-semibold">{userName|| "usuario"}</span>
-              </p>
-            </div>
-            <button onClick={desconectar} disabled={isDisconnecting}
-              className="px-5 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl text-xs
-                         font-semibold transition-all flex items-center gap-2 border border-red-500/20
-                         disabled:opacity-50 disabled:cursor-not-allowed">
-              {isDisconnecting
-                ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                : <LogOut className="w-3.5 h-3.5" />}
-              {isDisconnecting ? "Cerrando..." : "Cerrar Sesión"}
-            </button>
-          </motion.div>
-        )}
-
-        {/* QR listo */}
-        {!isConnected && qrPhase === "qr" && qrSrc && (
-          <div className="flex flex-col items-center gap-4 w-full">
-            <div className="text-center">
-              <p className="text-base font-bold text-white">Vincular Dispositivo</p>
-              <p className="text-xs text-gray-400 mt-0.5">WhatsApp → Dispositivos vinculados → Vincular</p>
-            </div>
-            <div className="relative p-3 bg-white rounded-xl group cursor-pointer" onClick={() => fetchQR()}>
-              <img src={qrSrc} alt="QR" className="w-52 h-52" />
-              <div className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl">
-                <div className="p-2.5 bg-white rounded-full text-black">
-                  <RefreshCw className="w-5 h-5" />
+              <div className="bg-[#25D366]/[0.03] border-0 rounded-lg p-2.5 flex items-center gap-2.5">
+                <MessageSquare className="w-3.5 h-3.5 text-white/70 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-[8px] text-white/70 uppercase tracking-wider">Número WhatsApp</p>
+                  <p className="text-xs font-bold text-white font-mono truncate">
+                    {waStatus.numero ? `+${waStatus.numero}` : "—"}
+                  </p>
                 </div>
               </div>
             </div>
-            <button onClick={() => fetchQR()}
-              className="px-4 py-1.5 bg-white/5 hover:bg-white/10 text-white rounded-lg text-xs transition-all border border-white/10">
-              ↻ Actualizar QR
-            </button>
-          </div>
-        )}
-
-        {/* Esperando / vinculando */}
-        {!isConnected && (qrPhase === "waiting" || qrPhase === null) && (
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-52 h-52 bg-white/5 rounded-xl flex flex-col items-center justify-center gap-3 border border-white/5">
-              <RefreshCw className="w-7 h-7 text-gray-500 animate-spin" />
-              <p className="text-[11px] text-gray-500 text-center px-4 leading-relaxed">
-                {waStatus.estado === "conectando"   ? "📲 Vinculando dispositivo..." :
-                 waStatus.estado === "reconectando" ? "🔄 Verificando vinculación..." :
-                 qrPhase === null                   ? "" :
-                                                      "Esperando QR..."}
-              </p>
-            </div>
-            {qrPhase !== null && (
+            {isConnected ? (
+              <button onClick={desconectar} disabled={isDisconnecting}
+                className="w-full py-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5
+                           bg-red-500/10 hover:bg-red-500/15 text-red-400 border border-red-500/15
+                           disabled:opacity-40 transition-all">
+                {isDisconnecting ? <RefreshCw className="w-3 h-3 animate-spin" /> : <LogOut className="w-3 h-3" />}
+                {isDisconnecting ? "Cerrando..." : "Cerrar sesión"}
+              </button>
+            ) : (
               <button onClick={() => fetchQR("desconectado")}
-                className="px-4 py-1.5 bg-white/5 hover:bg-white/10 text-white rounded-lg text-xs transition-all border border-white/10">
-                ↻ Forzar QR
+                className="w-full py-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5
+                           bg-[#4ade80]/10 hover:bg-[#4ade80]/15 text-[#4ade80] border border-[#4ade80]/15 transition-all">
+                <RefreshCw className="w-3 h-3" />
+                Obtener nuevo QR
               </button>
             )}
           </div>
-        )}
+
+          {/* Tarjeta estado */}
+          <div className="relative bg-[#000000] border-0 rounded-xl p-3 flex-1 overflow-hidden">
+            <p className="text-[8px] font-bold uppercase tracking-widest text-gray-200 mb-2">Estado del sistema</p>
+            <div className="space-y-2">
+              {[
+                {
+                  label: "WhatsApp API",
+                  value: showBadge ? LABELS[estadoBadge] : "—",
+                  color: isConnected ? "text-[#4ade80]" : TEXT_COLOR[estadoBadge],
+                  dot: isConnected ? "bg-[#4ade80]" : DOT_COLOR[estadoBadge],
+                  ping: true,
+                },
+                {
+                  label: "Socket.IO",
+                  value: socketOk ? "Conectado" : "Inactivo",
+                  color: socketOk ? "text-[#4ade80]" : "text-white/70",
+                  dot: socketOk ? "bg-[#4ade80]" : "bg-white/20",
+                  ping: socketOk,
+                },
+                {
+                  label: "Polling",
+                  value: "Activo",
+                  color: "text-white/75",
+                  dot: "bg-white/20",
+                  ping: false,
+                },
+              ].map((item) => (
+                <div key={item.label} className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex h-2 w-2">
+                      {item.ping && <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${item.dot} opacity-50`} />}
+                      <span className={`relative inline-flex h-2 w-2 rounded-full ${item.dot}`} />
+                    </div>
+                    <span className="text-[11px] text-white/75">{item.label}</span>
+                  </div>
+                  <span className={`text-[11px] font-bold ${item.color}`}>{item.value}</span>
+                </div>
+              ))}
+            </div>
+            {isConnected && (
+              <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                className="mt-2 flex items-center gap-2 bg-[#4ade80]/[0.07] border border-[#4ade80]/10 rounded-lg px-2.5 py-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-[#4ade80] shrink-0" />
+                <p className="text-[10px] text-[#4ade80]/80 font-medium">Todo listo — listo para enviar</p>
+              </motion.div>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Panel derecho */}
-      <div className="flex flex-col gap-4">
-
-        <div className="grid grid-cols-2 gap-3">
-          <StatCard title="Usuario" value={userName || "—"} icon={Users}         accent="bg-blue-500"  />
-          <StatCard title="Número"  value={waStatus.numero  || "—"} icon={MessageSquare} accent="bg-[#25D366]" />
+      {/* ── Log de eventos ── */}
+      <div className="relative bg-[#000000] border-0 rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.05]">
+          <div className="flex items-center gap-2">
+            <Terminal className="w-3 h-3 text-[#4ade80]" />
+            <span className="text-[10px] font-bold text-gray-200 uppercase tracking-widest">Registro</span>
+          </div>
+          <button onClick={() => setLogs([makeLog("Registro limpiado", "info")])}
+            className="text-[9px] font-bold uppercase tracking-wider text-gray-300 hover:text-white/70 transition-colors px-2 py-0.5 rounded hover:bg-white/[0.04]">
+            Limpiar
+          </button>
         </div>
-
-        {/* Badge */}
-        <div className="bg-[#1a1a1a] border border-white/5 rounded-xl px-3 py-2.5 flex items-center justify-between min-h-11">
-          {showBadge ? (
-            <>
-              <div className="flex items-center gap-2.5">
-                <div className="relative flex h-2.5 w-2.5">
-                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${DOT_COLOR[estadoBadge]} opacity-60`} />
-                  <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${DOT_COLOR[estadoBadge]}`} />
-                </div>
-                <span className={`text-xs font-semibold ${TEXT_COLOR[estadoBadge]}`}>{LABELS[estadoBadge]}</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-[10px] text-gray-600 font-mono uppercase tracking-wider">
-                <span className={`w-1.5 h-1.5 rounded-full ${socketOk ? "bg-[#25D366]" : "bg-gray-700"}`} />
-                Socket {socketOk ? "OK" : "—"}
-              </div>
-            </>
+        <div className="divide-y divide-white/[0.03] max-h-40 overflow-y-auto custom-log-scroll">
+          {logs.length === 0 ? (
+            <div className="py-5 flex items-center justify-center">
+              <p className="text-[10px] text-white/15 font-mono">Sin eventos</p>
+            </div>
           ) : (
-            <div className="flex items-center gap-2">
-              <div className="w-2.5 h-2.5 rounded-full bg-white/10 animate-pulse" />
-              <span className="text-xs text-gray-700">Cargando...</span>
-            </div>
+            [...logs].reverse().map((log) => (
+              <motion.div key={log.id}
+                initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.15 }}
+                className="flex items-center gap-3 px-4 py-1.5 hover:bg-white/[0.02] transition-colors">
+                <span className="text-[9px] font-mono text-white/20 shrink-0 w-14">{log.timestamp}</span>
+                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  log.type === "success" ? "bg-[#4ade80]"
+                  : log.type === "error"   ? "bg-red-400"
+                  : log.type === "warning" ? "bg-yellow-400"
+                  : "bg-blue-400"
+                }`} />
+                <span className={`text-[10px] font-mono flex-1 ${LOG_ICON[log.type]}`}>{log.message}</span>
+              </motion.div>
+            ))
           )}
+          <div ref={logEndRef} />
         </div>
-
-        {/* Log box */}
-        <div className="bg-[#111111] border border-white/5 rounded-2xl flex flex-col flex-1 min6-h-65">
-          <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Terminal className="w-3.5 h-3.5 text-[#25D366]" />
-              <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Registro</span>
-            </div>
-            <button onClick={() => setLogs([makeLog("Log limpiado", "info")])}
-              className="text-[10px] text-gray-600 hover:text-white uppercase tracking-tighter transition-colors">
-              Limpiar
-            </button>
-          </div>
-          <div className="p-3 font-mono text-[10px] overflow-y-auto flex flex-col gap-1" style={{ maxHeight: 280 }}>
-            {logs.length === 0
-              ? <span className="text-gray-800">—</span>
-              : logs.map((log) => (
-                <div key={log.id} className="flex gap-2 animate-in slide-in-from-left-2 duration-150">
-                  <span className="text-gray-700 shrink-0">[{log.timestamp}]</span>
-                  <span className={
-                    log.type === "success" ? "text-green-400"
-                    : log.type === "error"   ? "text-red-400"
-                    : log.type === "warning" ? "text-yellow-400"
-                    : "text-blue-400"
-                  }>{log.message}</span>
-                </div>
-              ))
-            }
-          </div>
-        </div>
-
       </div>
+
+      {/* ── Reportes ── */}
+      <div className="space-y-3">
+
+        {/* Header reportes */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="w-3.5 h-3.5 text-[#4ade80]" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-white/70">Reportes</span>
+          </div>
+          <button onClick={loadReports} disabled={reportsLoading}
+            className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-white/25
+                       hover:text-white/60 px-2 py-1 rounded hover:bg-white/[0.04] transition-all disabled:opacity-40">
+            <RefreshCw className={`w-3 h-3 ${reportsLoading ? "animate-spin" : ""}`} />
+            Actualizar
+          </button>
+        </div>
+
+        {/* Stats generales */}
+        {summary ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              { label: "Total mensajes",  value: summary.mensajes.total.toLocaleString(),     color: "text-white",       Icon: Send        },
+              { label: "Enviados",        value: summary.mensajes.enviados.toLocaleString(),   color: "text-[#4ade80]",   Icon: CheckCircle2 },
+              { label: "Fallidos",        value: summary.mensajes.fallidos.toLocaleString(),   color: "text-[#f87171]",   Icon: XCircle      },
+              { label: "Tasa de éxito",   value: `${summary.mensajes.tasa_exito}%`,            color: "text-[#60a5fa]",   Icon: TrendingUp   },
+            ].map(({ label, value, color, Icon }) => (
+              <div key={label} className="bg-[#000000] rounded-xl px-3 py-3 flex items-center gap-3">
+                <Icon className={`w-4 h-4 shrink-0 ${color} opacity-60`} />
+                <div>
+                  <p className="text-[9px] font-semibold text-gray-200  mb-0.5">{label}</p>
+                  <p className={`text-base font-black leading-none ${color}`}>{value}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[1,2,3,4].map(i => (
+              <div key={i} className="bg-[#000000] rounded-xl h-14 animate-pulse" />
+            ))}
+          </div>
+        )}
+
+        {/* Grid: gráfica + desglose */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-3">
+
+          {/* Gráfica últimos 7 días */}
+          <div className="bg-[#000000] rounded-xl p-4">
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <p className="text-[8px] font-bold uppercase tracking-widest text-white/40 mb-0.5">Analítica</p>
+                <h3 className="text-sm font-black text-white">Últimos 7 días</h3>
+              </div>
+              {dailyData.length > 0 && (
+                <div className="text-right">
+                  <p className="text-lg font-black text-[#4ade80] leading-none">
+                    {dailyData.reduce((a, d) => a + d.enviados, 0).toLocaleString()}
+                  </p>
+                  <p className="text-[8px] text-white/30 uppercase tracking-wider">enviados</p>
+                </div>
+              )}
+            </div>
+            {dailyData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={130}>
+                <BarChart data={dailyData.map(d => ({
+                  name: d.fecha === new Date().toISOString().slice(0,10)
+                    ? "Hoy"
+                    : new Date(d.fecha + "T12:00:00").toLocaleDateString("es-PE", { day: "2-digit", month: "short" }),
+                  enviados: d.enviados,
+                  fallidos: d.fallidos,
+                }))} barCategoryGap="35%">
+                  <XAxis dataKey="name"
+                    tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 10, fontWeight: 700 }}
+                    axisLine={false} tickLine={false} />
+                  <YAxis hide />
+                  <Tooltip
+                    contentStyle={{ background: "#040704", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, fontSize: 11 }}
+                    labelStyle={{ color: "rgba(255,255,255,0.6)", fontWeight: 700 }}
+                    itemStyle={{ color: "#4ade80" }}
+                    cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                  />
+                  <Bar dataKey="enviados" name="Enviados" radius={[4,4,0,0]}>
+                    {dailyData.map((d, i) => (
+                      <Cell key={i}
+                        fill={d.enviados === Math.max(...dailyData.map(x => x.enviados)) && d.enviados > 0
+                          ? "#4ade80" : "rgba(74,222,128,0.2)"} />
+                    ))}
+                  </Bar>
+                  <Bar dataKey="fallidos" name="Fallidos" radius={[4,4,0,0]} fill="rgba(248,113,113,0.3)" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-[130px] flex items-center justify-center">
+                <p className="text-xs text-white/20">Sin datos en este período</p>
+              </div>
+            )}
+          </div>
+
+          {/* Desglose por tipo + campañas */}
+          <div className="space-y-2">
+
+            {/* Por tipo */}
+            <div className="bg-[#000000] rounded-xl p-3">
+              <p className="text-[8px] font-bold uppercase tracking-widest text-gray-200 mb-2.5">Por tipo de mensaje</p>
+              {summary ? (
+                <div className="space-y-2">
+                  {[
+                    { label: "Texto",     value: summary.mensajes.por_tipo.texto,     color: "#4ade80" },
+                    { label: "Imagen",    value: summary.mensajes.por_tipo.imagen,    color: "#60a5fa" },
+                    { label: "Documento", value: summary.mensajes.por_tipo.documento, color: "#fb923c" },
+                  ].map(({ label, value, color }) => {
+                    const pct = summary.mensajes.total > 0 ? Math.round((value / summary.mensajes.total) * 100) : 0;
+                    return (
+                      <div key={label}>
+                        <div className="flex justify-between text-[9px] mb-1">
+                          <span className="text-gray-300">{label}</span>
+                          <span className="font-bold font-mono" style={{ color }}>{value.toLocaleString()} <span className="text-white/25">({pct}%)</span></span>
+                        </div>
+                        <div className="h-1 bg-white/[0.05] rounded-full overflow-hidden">
+                          <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }}
+                            transition={{ duration: 0.6, ease: "easeOut" }}
+                            className="h-full rounded-full" style={{ background: color }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-6 bg-white/[0.03] rounded animate-pulse" />)}</div>
+              )}
+            </div>
+
+            {/* Campañas */}
+            <div className="bg-[#000000] rounded-xl p-3">
+              <p className="text-[8px] font-bold uppercase tracking-widest text-gray-200 mb-2.5">Campañas</p>
+              {summary ? (
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[
+                    { label: "Total",       value: summary.campanas.total,       color: "text-white"      },
+                    { label: "Completadas", value: summary.campanas.completadas, color: "text-[#4ade80]"  },
+                    { label: "Con errores", value: summary.campanas.con_errores, color: "text-[#fb923c]"  },
+                    { label: "En proceso",  value: summary.campanas.en_proceso,  color: "text-[#60a5fa]"  },
+                  ].map(({ label, value, color }) => (
+                    <div key={label} className="bg-white/[0.03] rounded-lg px-2.5 py-2 text-center">
+                      <p className={`text-lg font-black leading-none ${color}`}>{value}</p>
+                      <p className="text-[7px] text-gray-300 uppercase tracking-wider mt-0.5 font-bold">{label}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-1.5">{[1,2,3,4].map(i => <div key={i} className="h-12 bg-white/[0.03] rounded-lg animate-pulse" />)}</div>
+              )}
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <style>{`
+        .custom-log-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-log-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-log-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.04); border-radius: 10px; }
+      `}</style>
     </div>
   );
 }
