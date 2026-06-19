@@ -8,7 +8,6 @@ import {
   AlertCircle,
   LogOut,
   Code2,
-  PanelRightClose,
   CheckCircle2,
   XCircle,
   Menu,

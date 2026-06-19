@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { motion, AnimatePresence } from "motion/react";
 import {
   CheckCircle2, LogOut, RefreshCw, Terminal,
-  Users, MessageSquare, Wifi, WifiOff, Clock,
+  Users, MessageSquare,
   TrendingUp, Send, XCircle,
 } from "lucide-react";
 import {
@@ -89,7 +89,7 @@ export default function ConnectionView({ apiUrl, apiKey, userName, socket, onSta
   const [socketOk,        setSocketOk]        = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [logs,            setLogs]            = useState<LogEntry[]>([]);
-  const [lastUpdate,      setLastUpdate]      = useState<string>(getNow());
+  const [_lastUpdate,     setLastUpdate]      = useState<string>(getNow());
 
   const waStatusRef    = useRef<WAStatus>({ estado: "desconectado" });
   const qrPhaseRef     = useRef<null | "waiting" | "qr" | "connected">(null);

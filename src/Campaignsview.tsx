@@ -40,12 +40,6 @@ const msgStatusConfig = {
 };
 
 
-const fmtDate = (d: string) =>
-  new Date(d).toLocaleDateString("es-PE", {
-    day: "2-digit", month: "short", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
-
 const fmtDateShort = (d: string) =>
   new Date(d).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" });
 
